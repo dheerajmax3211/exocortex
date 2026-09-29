@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { chatWithTools } from '@/lib/llm';
 import { ASK_TOOLS, executeAskTool } from '@/lib/llm-tools';
 import { checkAndHandleRecommendation } from '@/lib/recommendation';
+import { checkAndHandleTastePrediction } from '@/lib/taste-prediction';
 
 export async function POST(req: Request) {
   try {
@@ -15,7 +16,20 @@ export async function POST(req: Request) {
     const { messages, speak_as_me } = await req.json();
     const latestUserMessage = [...messages].reverse().find((m: any) => m.role === 'user')?.content || '';
 
-    // Check if the query is a recommendation request with hard exclusion requirement
+    // 1. Check if the query is a "Would I like X?" taste prediction query
+    const tasteResult = await checkAndHandleTastePrediction(latestUserMessage, supabase, speak_as_me);
+    if (tasteResult.isTastePrediction && tasteResult.content) {
+      return new Response(JSON.stringify({
+        content: tasteResult.content,
+        toolCalls: [],
+        citations: tasteResult.citations || [],
+        isNotRecorded: false
+      }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // 2. Check if the query is a recommendation request with hard exclusion requirement
     const recResult = await checkAndHandleRecommendation(latestUserMessage, supabase);
     if (recResult.isRecommendation && recResult.content) {
       return new Response(JSON.stringify({
@@ -41,6 +55,7 @@ ${toneInstruction}
 Answer strictly based on tool results.
 Cite sources inline as [entry date] (e.g. [14 Mar 2024] or [2024-03-14]).
 For list questions, return complete lists (paginate through tools rather than truncating).
+For questions asking whether the user would like or enjoy a movie, food, or item, call get_taste_profile to examine their recorded ratings, critical quotes, and preferences, and synthesize a grounded verdict comparing the candidate against their past memories.
 For ambiguity, ask one short clarifying question.
 If data is missing or not found in the graph, say clearly: "This hasn't been recorded yet." and suggest what the user could add.
 Never hallucinate or invent facts.`;

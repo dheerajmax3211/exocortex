@@ -94,6 +94,17 @@ export const ASK_TOOLS: ToolDef[] = [
       }, 
       required: ['ids'] 
     } 
+  },
+  {
+    name: 'get_taste_profile',
+    description: 'Get comprehensive profile of what user loves, hates, ratings, quotes, and taste facts for a category (movie, restaurant, book, show, all)',
+    parameters: {
+      type: 'object',
+      properties: {
+        category: { type: 'string', enum: ['movie', 'restaurant', 'book', 'show', 'all'] }
+      },
+      required: ['category']
+    }
   }
 ];
 
@@ -130,6 +141,11 @@ export async function executeAskTool(toolName: string, args: Record<string, any>
       case 'get_entries':
         result = await db.getEntries(supabase, args.ids);
         break;
+      case 'get_taste_profile': {
+        const { getFullTasteProfile } = await import('@/lib/taste-prediction');
+        result = await getFullTasteProfile(supabase, args.category || 'all');
+        break;
+      }
       default:
         throw new Error(`Unknown tool: ${toolName}`);
     }
