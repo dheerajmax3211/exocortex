@@ -36,6 +36,9 @@ export async function POST(req: Request) {
       if (ent.match?.existing_id && ent.match.confidence > 0.8) {
         entityIdMap[ent.temp_id] = ent.match.existing_id;
       } else {
+        const { getEmbedding } = await import('@/lib/embeddings');
+        const embedding = await getEmbedding(`${ent.name} (${ent.type}): ${ent.summary || ''} ${JSON.stringify(ent.props || {})}`);
+
         const newEnt = await db.createEntity(supabase, {
           user_id: user.id,
           type: ent.type,
@@ -43,8 +46,9 @@ export async function POST(req: Request) {
           aliases: ent.aliases || [],
           summary: ent.summary || null,
           props: ent.props || {},
-          created_from_entry: entry_id
-        });
+          created_from_entry: entry_id,
+          embedding
+        } as any);
         
         if (newEnt) {
           entityIdMap[ent.temp_id] = newEnt.id;
@@ -53,7 +57,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 2. Process edges
+    // 2. Process edges with bi-temporal versioning
     for (const edge of edges || []) {
       const srcId = entityIdMap[edge.src_temp_id];
       const dstId = entityIdMap[edge.dst_temp_id];
@@ -64,8 +68,11 @@ export async function POST(req: Request) {
           dst: dstId,
           relation: edge.relation,
           props: edge.props || {},
-          entry_id: entry_id
-        });
+          entry_id: entry_id,
+          occurred_on: event_date || null,
+          valid_from: event_date || null,
+          learned_at: new Date().toISOString()
+        } as any);
       }
     }
 
@@ -120,6 +127,11 @@ export async function POST(req: Request) {
         console.error('Layout update failed for', newId, e);
       }
     }
+
+    // 7. Update cognitive clusters / living themes in background
+    import('@/lib/community-clustering').then(({ updateCognitiveClusters }) => {
+      updateCognitiveClusters(supabase, user.id).catch(e => console.warn('Cluster update err:', e));
+    });
 
     return NextResponse.json({ success: true, createdEntities });
   } catch (error: any) {

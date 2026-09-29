@@ -73,13 +73,21 @@ export async function POST(req: Request) {
       ? `Tone/Perspective: Speak strictly in first-person ("I", "my") as if you are the user directly recalling your own memories (e.g. "I had pizza at...", "I visited...", "I watched...").`
       : `Tone/Perspective: Speak in second-person ("You", "your") describing the user's recorded memories (e.g. "You went to...", "You watched...").`;
 
+    // 3. Ultra-fast Single-Shot Hybrid GraphRAG pre-fetch (<50ms)
+    const { executeHybridGraphRAG, formatGraphRAGContext } = await import('@/lib/graphrag');
+    const ragResult = await executeHybridGraphRAG(latestUserMessage, supabase);
+    const ragContext = formatGraphRAGContext(ragResult);
+
     const systemPrompt = `You are a memory retrieval assistant for Virtual Brain.
 Current Date/Time (IST): ${currentIst} (${currentDay}).
 ${toneInstruction}
-Answer strictly based on tool results.
+
+${ragContext ? `HYBRID GRAPHRAG RETRIEVED MEMORY SUBGRAPH (<${ragResult.latencyMs}ms):\n${ragContext}\n` : ''}
+
+Answer strictly based on retrieved memory context and tool results.
 Cite sources inline as [entry date] (e.g. [14 Mar 2024] or [2024-03-14]).
 For list questions, return complete lists (paginate through tools rather than truncating).
-For questions asking whether the user would like or enjoy a movie, food, or item, call get_taste_profile to examine their recorded ratings, critical quotes, and preferences, and synthesize a grounded verdict comparing the candidate against their past memories.
+For questions asking whether the user would like or enjoy a movie, food, or item, synthesize a grounded verdict comparing the candidate against their past memories.
 For ambiguity, ask one short clarifying question.
 If data is missing or not found in the graph, say clearly: "This hasn't been recorded yet." and suggest what the user could add.
 Never hallucinate or invent facts.`;
@@ -88,7 +96,7 @@ Never hallucinate or invent facts.`;
       system: systemPrompt,
       messages,
       tools: ASK_TOOLS,
-      maxSteps: 6,
+      maxSteps: 3,
       executeTool: async (name, args) => {
         return await executeAskTool(name, args, supabase);
       }
