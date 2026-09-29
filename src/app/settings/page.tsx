@@ -2,14 +2,24 @@
 
 import React, { useState, useEffect } from 'react'
 import Navigation from '@/components/ui/Navigation'
+import Link from 'next/link'
 
 export default function SettingsPage() {
   const [speakAsMe, setSpeakAsMe] = useState(false)
   const [theme, setTheme] = useState('dark')
+  const [info, setInfo] = useState<any>(null)
+  const [isReprocessing, setIsReprocessing] = useState(false)
+  const [reprocessStatus, setReprocessStatus] = useState<string | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
 
   useEffect(() => {
     setSpeakAsMe(localStorage.getItem('speakAsMe') === 'true')
     setTheme(localStorage.getItem('theme') || 'dark')
+
+    fetch('/api/settings/info')
+      .then(res => res.json())
+      .then(data => setInfo(data))
+      .catch(() => {})
   }, [])
 
   const handleSpeakAsMeToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -30,6 +40,7 @@ export default function SettingsPage() {
   }
 
   const handleExport = async () => {
+    setIsExporting(true)
     try {
       const res = await fetch('/api/export')
       if (res.ok) {
@@ -37,7 +48,7 @@ export default function SettingsPage() {
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = 'brain_export.json'
+        a.download = `virtual_brain_backup_${new Date().toISOString().split('T')[0]}.json`
         a.click()
         window.URL.revokeObjectURL(url)
       } else {
@@ -46,52 +57,135 @@ export default function SettingsPage() {
     } catch (err) {
       console.error(err)
       alert('Error exporting data')
+    } finally {
+      setIsExporting(false)
     }
   }
   
   const handleReprocess = async () => {
+    setIsReprocessing(true)
+    setReprocessStatus('Reprocessing all committed entries into your knowledge graph...')
     try {
-      alert('Reprocessing started in background.')
-      await fetch('/api/reprocess', { method: 'POST' })
-    } catch (err) {
+      const res = await fetch('/api/reprocess', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'all' })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setReprocessStatus(data.message || `Reprocessed ${data.reprocessed} entries successfully.`)
+      } else {
+        setReprocessStatus('Failed: ' + (data.error || 'Unknown error'))
+      }
+    } catch (err: any) {
       console.error(err)
+      setReprocessStatus('Reprocessing error: ' + err.message)
+    } finally {
+      setIsReprocessing(false)
     }
   }
 
   const handleSignOut = async () => {
-    await fetch('/auth/signout', { method: 'POST' })
-    window.location.href = '/auth/login'
+    try {
+      await fetch('/auth/signout', { method: 'POST' })
+    } finally {
+      window.location.href = '/auth/login'
+    }
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#0a0a0f] text-white p-4 pb-24">
+    <main className="flex min-h-screen flex-col bg-[#0a0a0f] text-white p-4 pb-28">
       <div className="max-w-xl mx-auto w-full">
-        <h1 className="text-3xl font-bold mb-8 text-gray-100">Settings</h1>
+        <h1 className="text-3xl font-serif font-bold mb-6 text-white">Settings & Facilities</h1>
 
         <div className="space-y-6">
-          <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-            <h2 className="text-lg font-semibold mb-6 text-gray-200 border-b border-gray-800 pb-2">Preferences</h2>
+          {/* Quick Access to Specialized Facilities */}
+          <section className="bg-[#12121c] border border-white/10 rounded-2xl p-6 shadow-lg">
+            <h2 className="text-xs font-mono uppercase tracking-wider text-indigo-400 font-semibold mb-4">
+              AI Memory Facilities
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Link 
+                href="/import"
+                className="p-3.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-colors flex flex-col justify-between"
+              >
+                <div className="text-sm font-medium text-white">Bulk Import</div>
+                <div className="text-[11px] text-white/50 mt-1">Paste movie/food lists</div>
+              </Link>
+
+              <Link 
+                href="/backfill"
+                className="p-3.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-colors flex flex-col justify-between"
+              >
+                <div className="text-sm font-medium text-white">Backfill Mode</div>
+                <div className="text-[11px] text-white/50 mt-1">Prompted life periods</div>
+              </Link>
+
+              <Link 
+                href="/quiz"
+                className="p-3.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-colors flex flex-col justify-between"
+              >
+                <div className="text-sm font-medium text-white">Recall Quiz</div>
+                <div className="text-[11px] text-white/50 mt-1">SM-2 memory recall</div>
+              </Link>
+            </div>
+          </section>
+
+          {/* Model & System Info */}
+          <section className="bg-[#12121c] border border-white/10 rounded-2xl p-6 shadow-lg">
+            <h2 className="text-xs font-mono uppercase tracking-wider text-white/60 font-semibold mb-4">
+              LLM & System Configuration
+            </h2>
+            {info ? (
+              <div className="space-y-3 text-xs font-mono">
+                <div className="flex justify-between py-1 border-b border-white/5">
+                  <span className="text-white/50">Provider</span>
+                  <span className="text-indigo-400 font-bold uppercase">{info.provider}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-white/5">
+                  <span className="text-white/50">Model</span>
+                  <span className="text-white">{info.model}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-white/5">
+                  <span className="text-white/50">Timezone</span>
+                  <span className="text-white">{info.timezone}</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-white/50">Backup Target</span>
+                  <span className="text-white truncate max-w-[200px]">{info.backupRepo}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="h-20 animate-pulse bg-white/5 rounded-lg" />
+            )}
+          </section>
+
+          {/* Preferences */}
+          <section className="bg-[#12121c] border border-white/10 rounded-2xl p-6 shadow-lg">
+            <h2 className="text-xs font-mono uppercase tracking-wider text-white/60 font-semibold mb-6">
+              Preferences
+            </h2>
             
             <div className="flex items-center justify-between mb-6">
               <div>
-                <div className="text-gray-200 font-medium">Speak as me</div>
-                <div className="text-xs text-gray-500 mt-1">Generate first-person summaries</div>
+                <div className="text-white font-medium text-sm">Speak-as-me Mode</div>
+                <div className="text-xs text-white/50 mt-0.5">Render Ask answers in 1st person ("I visited...")</div>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" className="sr-only peer" checked={speakAsMe} onChange={handleSpeakAsMeToggle} />
-                <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
               </label>
             </div>
 
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-gray-200 font-medium">Theme</div>
-                <div className="text-xs text-gray-500 mt-1">App appearance</div>
+                <div className="text-white font-medium text-sm">Theme</div>
+                <div className="text-xs text-white/50 mt-0.5">Application color scheme</div>
               </div>
               <select 
                 value={theme} 
                 onChange={handleThemeToggle} 
-                className="bg-gray-800 border border-gray-700 rounded-lg py-2 px-3 text-sm text-gray-200 focus:outline-none focus:border-blue-500"
+                className="bg-white/5 border border-white/10 rounded-xl py-2 px-3 text-xs text-white focus:outline-none focus:border-indigo-500"
               >
                 <option value="dark">Dark</option>
                 <option value="light">Light</option>
@@ -99,26 +193,55 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-            <h2 className="text-lg font-semibold mb-6 text-gray-200 border-b border-gray-800 pb-2">Data Management</h2>
+          {/* Data Management */}
+          <section className="bg-[#12121c] border border-white/10 rounded-2xl p-6 shadow-lg">
+            <h2 className="text-xs font-mono uppercase tracking-wider text-white/60 font-semibold mb-4">
+              Data Management & Backup
+            </h2>
             
             <div className="space-y-3">
-              <button onClick={handleExport} className="w-full flex items-center justify-between p-4 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 transition">
-                <span className="text-gray-200 font-medium">Export Data</span>
-                <span className="text-xs text-gray-400">JSON</span>
+              <button 
+                onClick={handleExport} 
+                disabled={isExporting}
+                className="w-full flex items-center justify-between p-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
+              >
+                <div>
+                  <div className="text-white font-medium text-sm text-left">Export All Data</div>
+                  <div className="text-xs text-white/50 text-left mt-0.5">JSON archive + Markdown summary</div>
+                </div>
+                <span className="text-xs font-mono text-indigo-400">{isExporting ? 'Exporting...' : 'Download'}</span>
               </button>
               
-              <button onClick={handleReprocess} className="w-full flex items-center justify-between p-4 rounded-xl bg-gray-800 hover:bg-gray-700 border border-gray-700 transition">
-                <span className="text-gray-200 font-medium">Reprocess Memories</span>
-                <span className="text-xs text-gray-400">LLM sync</span>
+              <button 
+                onClick={handleReprocess} 
+                disabled={isReprocessing}
+                className="w-full flex items-center justify-between p-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
+              >
+                <div>
+                  <div className="text-white font-medium text-sm text-left">Reprocess Memories</div>
+                  <div className="text-xs text-white/50 text-left mt-0.5">Rebuild graph from raw entries</div>
+                </div>
+                <span className="text-xs font-mono text-indigo-400">{isReprocessing ? 'Processing...' : 'Run'}</span>
               </button>
+
+              {reprocessStatus && (
+                <div className="p-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white/80 font-mono">
+                  {reprocessStatus}
+                </div>
+              )}
             </div>
           </section>
 
-          <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-            <h2 className="text-lg font-semibold mb-6 text-gray-200 border-b border-gray-800 pb-2">Account</h2>
+          {/* Account */}
+          <section className="bg-[#12121c] border border-white/10 rounded-2xl p-6 shadow-lg">
+            <h2 className="text-xs font-mono uppercase tracking-wider text-white/60 font-semibold mb-4">
+              Account
+            </h2>
             
-            <button onClick={handleSignOut} className="w-full py-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-500 font-medium transition border border-red-500/20">
+            <button 
+              onClick={handleSignOut} 
+              className="w-full py-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 font-medium transition-colors border border-red-500/20 text-sm"
+            >
               Sign Out
             </button>
           </section>

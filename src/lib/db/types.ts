@@ -13,14 +13,14 @@ export type EntityType =
   | 'item' 
   | 'other';
 
-export type DatePrecision = 'year' | 'month' | 'day' | 'time';
+export type DatePrecision = 'day' | 'month' | 'year' | 'period' | 'unknown';
 
 export interface EdgeProps {
-  rating_10?: number;
-  sentiment?: string;
-  quote?: string;
-  role?: string;
-  subject?: string;
+  rating_10?: number | null;
+  sentiment?: string | null;
+  quote?: string | null;
+  role?: string | null;
+  subject?: string | null;
   [key: string]: any;
 }
 
@@ -29,10 +29,10 @@ export interface Entry {
   user_id: string;
   raw_text: string;
   entered_at: string;
-  event_date?: string;
-  date_end?: string;
-  date_precision?: DatePrecision;
-  source?: string;
+  event_date?: string | null;
+  date_end?: string | null;
+  date_precision?: DatePrecision | null;
+  source?: string | null;
   status: 'draft' | 'processed' | 'failed' | 'committed';
   fts?: any;
 }
@@ -43,13 +43,13 @@ export interface Entity {
   type: EntityType;
   name: string;
   aliases: string[];
-  summary?: string;
+  summary?: string | null;
   props?: Record<string, any>;
-  start_date?: string;
-  end_date?: string;
-  date_precision?: DatePrecision;
-  created_from_entry?: string;
-  deleted_at?: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  date_precision?: DatePrecision | null;
+  created_from_entry?: string | null;
+  deleted_at?: string | null;
   created_at: string;
 }
 
@@ -60,9 +60,9 @@ export interface Edge {
   dst: string;
   relation: string;
   props?: EdgeProps;
-  entry_id?: string;
-  occurred_on?: string;
-  deleted_at?: string;
+  entry_id?: string | null;
+  occurred_on?: string | null;
+  deleted_at?: string | null;
   created_at: string;
 }
 

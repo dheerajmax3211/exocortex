@@ -7,6 +7,7 @@ import Navigation from '@/components/ui/Navigation'
 import FloatingAddButton from '@/components/ui/FloatingAddButton'
 import SearchOverlay from './SearchOverlay'
 import OnThisDaySheet from './OnThisDaySheet'
+import EntityProfileSheet from './EntityProfileSheet'
 
 interface ExploreViewProps {
   nodeCount: number
@@ -16,6 +17,8 @@ interface ExploreViewProps {
 export default function ExploreView({ nodeCount, edgeCount }: ExploreViewProps) {
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isOnThisDayOpen, setIsOnThisDayOpen] = useState(false)
+  const [profileEntityId, setProfileEntityId] = useState<string | null>(null)
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-between bg-[#0a0a0f] text-white overflow-hidden relative">
@@ -23,10 +26,14 @@ export default function ExploreView({ nodeCount, edgeCount }: ExploreViewProps) 
         nodeCount={nodeCount} 
         edgeCount={edgeCount} 
         onSearchClick={() => setIsSearchOpen(true)}
+        onTodayClick={() => setIsOnThisDayOpen(true)}
       />
       
       <div className="absolute inset-0 z-0">
-        <ExploreCanvas />
+        <ExploreCanvas 
+          onViewProfile={(id) => setProfileEntityId(id)}
+          focusedNodeId={focusedNodeId}
+        />
       </div>
 
       <SearchOverlay 
@@ -34,13 +41,19 @@ export default function ExploreView({ nodeCount, edgeCount }: ExploreViewProps) 
         onClose={() => setIsSearchOpen(false)}
         onSelectNode={(id) => {
           setIsSearchOpen(false)
-          window.location.href = `/browse/${id}`
+          setFocusedNodeId(id)
         }}
       />
 
       <OnThisDaySheet
         isOpen={isOnThisDayOpen}
         onClose={() => setIsOnThisDayOpen(false)}
+      />
+
+      <EntityProfileSheet 
+        entityId={profileEntityId}
+        isOpen={!!profileEntityId}
+        onClose={() => setProfileEntityId(null)}
       />
 
       <FloatingAddButton />

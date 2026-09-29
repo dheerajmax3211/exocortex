@@ -45,6 +45,12 @@ export class Camera {
     this.offsetY = cy - (cy - this.offsetY) * actualFactor;
   }
 
+  jumpTo(wx: number, wy: number, targetScale: number = 1.8) {
+    this.scale = targetScale;
+    this.offsetX = this.viewportWidth / 2 - wx * this.scale;
+    this.offsetY = this.viewportHeight / 2 - wy * this.scale;
+  }
+
   isVisible(wx: number, wy: number, margin: number = 0) {
     const screen = this.worldToScreen(wx, wy);
     return screen.x >= -margin && screen.x <= this.viewportWidth + margin &&

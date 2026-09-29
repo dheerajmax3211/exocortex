@@ -8,27 +8,57 @@ interface NodeCardProps {
   x: number;
   y: number;
   onClose?: () => void;
+  onViewProfile?: (entityId: string) => void;
 }
 
-const CATEGORY_COLORS: Record<GraphNode['type'], string> = {
+const CATEGORY_COLORS: Record<string, string> = {
   person: '#6366f1',
   place: '#22c55e',
   restaurant: '#f59e0b',
   dish: '#ef4444',
   movie: '#8b5cf6',
+  show: '#a855f7',
+  book: '#eab308',
   event: '#06b6d4',
   period: '#ec4899',
+  school: '#14b8a6',
+  org: '#3b82f6',
+  item: '#f97316',
   other: '#94a3b8',
 };
 
-export default function NodeCard({ node, x, y, onClose }: NodeCardProps) {
+export default function NodeCard({ node, x, y, onClose, onViewProfile }: NodeCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
   const [clampedPos, setClampedPos] = useState({ x, y });
+  const [factLine, setFactLine] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    let isCancelled = false;
+
+    // Fetch real grounded fact line from API
+    setIsLoading(true);
+    fetch(`/api/graph/node/${node.id}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!isCancelled) {
+          setFactLine(data.factLine || data.entity?.summary || 'Recorded in knowledge graph');
+          setIsLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setFactLine('Recorded in your memories');
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [node.id]);
 
   useEffect(() => {
     if (cardRef.current) {
@@ -56,7 +86,7 @@ export default function NodeCard({ node, x, y, onClose }: NodeCardProps) {
   return (
     <div
       ref={cardRef}
-      className={`fixed z-20 w-64 bg-[#12121a]/80 backdrop-blur-lg border border-white/10 rounded-xl p-4 shadow-2xl transition-all duration-150 ease-out ${mounted ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
+      className={`fixed z-30 w-72 bg-[#0e0e16]/95 backdrop-blur-xl border border-white/15 rounded-2xl p-4 shadow-2xl transition-all duration-150 ease-out ${mounted ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
       style={{
         left: clampedPos.x,
         top: clampedPos.y,
@@ -66,7 +96,8 @@ export default function NodeCard({ node, x, y, onClose }: NodeCardProps) {
       {onClose && (
         <button 
           onClick={onClose}
-          className="absolute top-3 right-3 text-white/50 hover:text-white"
+          className="absolute top-3 right-3 text-white/40 hover:text-white transition-colors"
+          aria-label="Close fact card"
         >
           &times;
         </button>
@@ -74,21 +105,37 @@ export default function NodeCard({ node, x, y, onClose }: NodeCardProps) {
       
       <div className="flex items-center gap-2 mb-2">
         <span 
-          className="w-3 h-3 rounded-full" 
-          style={{ backgroundColor: color, boxShadow: `0 0 10px ${color}` }}
+          className="w-2.5 h-2.5 rounded-full" 
+          style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }}
         />
-        <span className="text-xs font-medium text-white/70 uppercase tracking-wider">
+        <span className="text-[10px] font-mono font-semibold text-white/70 uppercase tracking-widest">
           {node.type}
         </span>
       </div>
       
-      <h3 className="text-xl font-bold text-white mb-2">{node.label}</h3>
+      <h3 className="text-lg font-serif font-bold text-white mb-2 leading-tight">
+        {node.label}
+      </h3>
       
-      <div className="bg-white/5 rounded-lg p-3 border border-white/5">
-        <p className="text-sm text-white/80">
-          Last visited on Sep 28
-        </p>
+      <div className="bg-white/5 rounded-xl p-3 border border-white/5 mb-3">
+        {isLoading ? (
+          <div className="h-4 bg-white/10 rounded animate-pulse w-3/4"></div>
+        ) : (
+          <p className="text-xs text-white/90 leading-relaxed font-sans">
+            {factLine}
+          </p>
+        )}
       </div>
+
+      {onViewProfile && (
+        <button
+          onClick={() => onViewProfile(node.id)}
+          className="w-full text-xs font-medium py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors flex items-center justify-center gap-1.5"
+        >
+          <span>View Profile</span>
+          <span className="font-mono text-white/60">&rarr;</span>
+        </button>
+      )}
     </div>
   );
 }

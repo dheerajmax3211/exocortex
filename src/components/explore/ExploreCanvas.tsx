@@ -1,13 +1,18 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Camera } from '@/lib/graph/camera';
 import { generateAmbientField, AmbientPoint } from '@/lib/graph/ambient-field';
 import { renderFrame, GraphNode, GraphEdge } from '@/lib/graph/renderer';
 import { InteractionManager } from '@/lib/graph/interactions';
 import NodeCard from './NodeCard';
 
-export default function ExploreCanvas() {
+interface ExploreCanvasProps {
+  onViewProfile?: (entityId: string) => void;
+  focusedNodeId?: string | null;
+}
+
+export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
@@ -31,6 +36,24 @@ export default function ExploreCanvas() {
     selectRef.current = selectedNode;
   }, [selectedNode]);
 
+  // Handle focus jumping from URL or prop
+  const handleFocusNode = (targetId: string, currentNodes: GraphNode[]) => {
+    const target = currentNodes.find(n => n.id === targetId);
+    if (target && canvasRef.current) {
+      cameraRef.current.jumpTo(target.x, target.y, 2.0);
+      setSelectedNode(target.id);
+      setHoveredNode(target.id);
+      const screenPos = cameraRef.current.worldToScreen(target.x, target.y);
+      setCardPos({ x: screenPos.x, y: screenPos.y });
+    }
+  };
+
+  useEffect(() => {
+    if (focusedNodeId && nodes.length > 0) {
+      handleFocusNode(focusedNodeId, nodes);
+    }
+  }, [focusedNodeId, nodes]);
+
   useEffect(() => {
     ambientRef.current = generateAmbientField(3000, 0, 0, 1000);
     
@@ -46,11 +69,17 @@ export default function ExploreCanvas() {
         nodesRef.current = fetchedNodes;
         edgesRef.current = fetchedEdges;
         
-        // Ensure camera cover-fit after nodes load if possible
         if (canvasRef.current) {
           const width = window.visualViewport?.width || window.innerWidth;
           const height = window.visualViewport?.height || window.innerHeight;
           cameraRef.current.coverFit(2000, 2000, width, height);
+        }
+
+        // Check URL for ?focus=entityId
+        const params = new URLSearchParams(window.location.search);
+        const focusParam = params.get('focus');
+        if (focusParam) {
+          handleFocusNode(focusParam, fetchedNodes);
         }
       } catch (err) {
         console.error('Failed to load graph:', err);
@@ -144,7 +173,11 @@ export default function ExploreCanvas() {
           node={activeNode} 
           x={cardPos.x} 
           y={cardPos.y} 
-          onClose={() => setSelectedNode(null)} 
+          onClose={() => {
+            setSelectedNode(null);
+            setHoveredNode(null);
+          }} 
+          onViewProfile={onViewProfile}
         />
       )}
     </div>
