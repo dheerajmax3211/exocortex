@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Camera } from '@/lib/graph/camera';
 import { generateAmbientField, AmbientPoint } from '@/lib/graph/ambient-field';
-import { renderFrame, GraphNode, GraphEdge } from '@/lib/graph/renderer';
+import { renderFrame, GraphNode, GraphEdge, ClusterHalo } from '@/lib/graph/renderer';
 import { InteractionManager } from '@/lib/graph/interactions';
 import NodeCard from './NodeCard';
 
@@ -24,6 +24,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   const ambientRef = useRef<AmbientPoint[]>([]);
   const nodesRef = useRef<GraphNode[]>([]);
   const edgesRef = useRef<GraphEdge[]>([]);
+  const clustersRef = useRef<ClusterHalo[]>([]);
   const interactionRef = useRef<InteractionManager | null>(null);
   const hoverRef = useRef<string | null>(null);
   const selectRef = useRef<string | null>(null);
@@ -64,10 +65,12 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
         
         const fetchedNodes = data.nodes || [];
         const fetchedEdges = data.edges || [];
+        const fetchedClusters = data.clusters || [];
         
         setNodes(fetchedNodes);
         nodesRef.current = fetchedNodes;
         edgesRef.current = fetchedEdges;
+        clustersRef.current = fetchedClusters;
         
         if (canvasRef.current) {
           const width = window.visualViewport?.width || window.innerWidth;
@@ -139,7 +142,8 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
         edgesRef.current,
         hoverRef.current,
         selectRef.current,
-        time
+        time,
+        clustersRef.current
       );
       animationId = requestAnimationFrame(loop);
     };

@@ -17,6 +17,8 @@ export default function AskChat() {
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [speakAsMe, setSpeakAsMe] = useState(true);
+  const [activeSpeechId, setActiveSpeechId] = useState<string | null>(null);
+  const [speechSupported, setSpeechSupported] = useState(false);
 
   const endOfMessagesRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -26,6 +28,7 @@ export default function AskChat() {
     if (saved !== null) {
       setSpeakAsMe(saved === 'true');
     }
+    setSpeechSupported(typeof window !== 'undefined' && 'speechSynthesis' in window);
   }, []);
 
   const toggleSpeakAsMe = () => {
@@ -37,6 +40,52 @@ export default function AskChat() {
   useEffect(() => {
     endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  const handleSpeakText = (messageId: string, text: string) => {
+    if (!speechSupported) return;
+
+    if (activeSpeechId === messageId) {
+      window.speechSynthesis.cancel();
+      setActiveSpeechId(null);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    // Strip markdown formatting, symbols, and links for natural voice playback
+    const cleanSpeech = text
+      .replace(/###\s+/g, '')
+      .replace(/####\s+/g, '')
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      .replace(/>\s+/g, '')
+      .replace(/\[.*?\]/g, '')
+      .replace(/[-•]\s+/g, '. ')
+      .replace(/[^\w\s.,!?'"%-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const utterance = new SpeechSynthesisUtterance(cleanSpeech);
+    utterance.rate = 1.05;
+    utterance.pitch = 1.0;
+
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => 
+      v.lang.startsWith('en-IN') || 
+      v.lang.startsWith('en-GB') || 
+      v.name.includes('Natural') || 
+      v.lang.startsWith('en-US')
+    );
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
+    }
+
+    utterance.onend = () => setActiveSpeechId(null);
+    utterance.onerror = () => setActiveSpeechId(null);
+
+    window.speechSynthesis.speak(utterance);
+    setActiveSpeechId(messageId);
+  };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -144,7 +193,7 @@ export default function AskChat() {
               </div>
               <h2 className="text-xl font-serif text-white font-semibold">Alive Virtual Me</h2>
               <p className="text-sm text-white/50 max-w-md mt-1">
-                Your living digital consciousness. Send text or attach photos (dating profiles, outfits, places) to get an unfiltered gut check from your exact vantage point.
+                Your living digital consciousness. Send text, attach photos, or tap the speaker to hear your Virtual Twin speak its thoughts out loud.
               </p>
             </div>
 
@@ -170,7 +219,7 @@ export default function AskChat() {
           messages.map((msg) => (
             <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
               <div
-                className={`max-w-[85%] rounded-2xl p-4 ${
+                className={`max-w-[85%] rounded-2xl p-4 relative group ${
                   msg.role === 'user' 
                     ? 'bg-indigo-600 text-white' 
                     : msg.isNotRecorded 
@@ -188,17 +237,47 @@ export default function AskChat() {
 
                 <div className="whitespace-pre-wrap">{msg.content}</div>
 
-                {msg.citations && msg.citations.length > 0 && (
-                  <div className="mt-3 flex gap-2 flex-wrap">
-                    {msg.citations.map((cit, i) => (
-                      <a 
-                        key={i} 
-                        href={`/timeline?search=${encodeURIComponent(cit)}`}
-                        className="text-xs bg-black/40 text-indigo-300 hover:text-white px-2 py-1 rounded-md border border-white/10 transition-colors inline-block"
-                      >
-                        [{cit}]
-                      </a>
-                    ))}
+                {/* Voice speech button for assistant answers */}
+                {msg.role === 'assistant' && speechSupported && (
+                  <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between">
+                    <button
+                      onClick={() => handleSpeakText(msg.id, msg.content)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono transition-all ${
+                        activeSpeechId === msg.id 
+                          ? 'bg-indigo-500 text-white animate-pulse' 
+                          : 'bg-white/5 hover:bg-white/15 text-white/60 hover:text-white border border-white/10'
+                      }`}
+                      title={activeSpeechId === msg.id ? 'Stop voice playback' : 'Listen to Virtual Me speak'}
+                    >
+                      {activeSpeechId === msg.id ? (
+                        <>
+                          <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+                          <span>Speaking...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                          </svg>
+                          <span>Speak Out Loud</span>
+                        </>
+                      )}
+                    </button>
+
+                    {msg.citations && msg.citations.length > 0 && (
+                      <div className="flex gap-1.5 flex-wrap">
+                        {msg.citations.map((cit, i) => (
+                          <a 
+                            key={i} 
+                            href={`/timeline?search=${encodeURIComponent(cit)}`}
+                            className="text-xs bg-black/40 text-indigo-300 hover:text-white px-2 py-0.5 rounded-md border border-white/10 transition-colors inline-block"
+                          >
+                            [{cit}]
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

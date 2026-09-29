@@ -14,6 +14,15 @@ export interface GraphEdge {
   target: string;
 }
 
+export interface ClusterHalo {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  radius: number;
+  color?: string;
+}
+
 const CATEGORY_COLORS: Record<GraphNode['type'], string> = {
   person: '#6366f1',
   place: '#22c55e',
@@ -33,11 +42,13 @@ export function renderFrame(
   realEdges: GraphEdge[],
   hoveredNodeId: string | null,
   selectedNodeId: string | null,
-  frameTime: number
+  frameTime: number,
+  clusters: ClusterHalo[] = []
 ) {
   ctx.fillStyle = '#0a0a0f';
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
+  // 1. Ambient particles inside brain silhouette
   ctx.save();
   for (const point of ambientField) {
     if (!camera.isVisible(point.x, point.y, 10)) continue;
@@ -47,6 +58,34 @@ export function renderFrame(
     ctx.beginPath();
     ctx.arc(screenPos.x, screenPos.y, point.size * camera.scale * 0.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+  ctx.restore();
+
+  // 2. Cognitive Cluster Nebulae (Brain Lobes)
+  ctx.save();
+  for (const cluster of clusters) {
+    if (!camera.isVisible(cluster.x, cluster.y, cluster.radius + 150)) continue;
+    const sPos = camera.worldToScreen(cluster.x, cluster.y);
+    const sRadius = Math.max(30, cluster.radius * camera.scale);
+
+    const grad = ctx.createRadialGradient(sPos.x, sPos.y, 0, sPos.x, sPos.y, sRadius);
+    grad.addColorStop(0, 'rgba(99, 102, 241, 0.12)');
+    grad.addColorStop(0.5, 'rgba(139, 92, 246, 0.05)');
+    grad.addColorStop(1, 'rgba(10, 10, 15, 0)');
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(sPos.x, sPos.y, sRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Delicate lobe label visible at normal zoom levels
+    if (camera.scale > 0.35 && camera.scale < 1.8) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.font = `600 ${Math.max(10, Math.min(14, 11 * camera.scale))}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(cluster.name.toUpperCase(), sPos.x, sPos.y - sRadius * 0.45);
+    }
   }
   ctx.restore();
 

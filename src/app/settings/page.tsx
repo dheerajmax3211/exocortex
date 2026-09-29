@@ -12,6 +12,8 @@ export default function SettingsPage() {
   const [isReprocessing, setIsReprocessing] = useState(false)
   const [reprocessStatus, setReprocessStatus] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
+  const [isDreaming, setIsDreaming] = useState(false)
+  const [dreamStatus, setDreamStatus] = useState<string | null>(null)
 
   useEffect(() => {
     setSpeakAsMe(localStorage.getItem('speakAsMe') === 'true')
@@ -90,6 +92,24 @@ export default function SettingsPage() {
       setReprocessStatus('Reprocessing error: ' + err.message)
     } finally {
       setIsReprocessing(false)
+    }
+  }
+
+  const handleDream = async () => {
+    setIsDreaming(true)
+    setDreamStatus('Replaying memories during REM dream sleep...')
+    try {
+      const res = await fetch('/api/dream', { method: 'POST' })
+      const data = await res.json()
+      if (data.success && data.dream) {
+        setDreamStatus(`✨ ${data.dream.title}: ${data.dream.insight}`)
+      } else {
+        setDreamStatus(data.message || 'Dream consolidation complete.')
+      }
+    } catch (e: any) {
+      setDreamStatus('Dream failed: ' + e.message)
+    } finally {
+      setIsDreaming(false)
     }
   }
 
@@ -246,6 +266,24 @@ export default function SettingsPage() {
               {reprocessStatus && (
                 <div className="p-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white/80 font-mono">
                   {reprocessStatus}
+                </div>
+              )}
+
+              <button 
+                onClick={handleDream} 
+                disabled={isDreaming}
+                className="w-full flex items-center justify-between p-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
+              >
+                <div>
+                  <div className="text-white font-medium text-sm text-left">Trigger Dream Consolidation</div>
+                  <div className="text-xs text-white/50 text-left mt-0.5">Subconscious pattern synthesis across years</div>
+                </div>
+                <span className="text-xs font-mono text-indigo-400">{isDreaming ? 'Consolidating...' : 'Dream'}</span>
+              </button>
+
+              {dreamStatus && (
+                <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-xs text-indigo-200 font-mono">
+                  {dreamStatus}
                 </div>
               )}
             </div>
