@@ -121,7 +121,7 @@ async function runCommandCodeCompletion(messages: Message[], system: string, too
     config: { workingDir: '/', date: new Date().toISOString().split('T')[0], environment: 'Node.js', structure: [], isGitRepo: false, currentBranch: '', mainBranch: 'main', gitStatus: '', recentCommits: [] },
     memory: null, taste: null, skills: null,
     permissionMode: 'standard', mode: 'agent',
-    threadId: 'thread_' + Math.random().toString(16).substring(2, 10),
+    threadId: crypto.randomUUID(),
     params
   };
 
@@ -143,7 +143,8 @@ async function runCommandCodeCompletion(messages: Message[], system: string, too
   });
 
   if (!response.ok) {
-    throw new Error(`Command Code HTTP Error: ${response.status} ${response.statusText}`);
+    const errBody = await response.text();
+    throw new Error(`Command Code HTTP Error: ${response.status} ${response.statusText} - ${errBody}`);
   }
 
   return response;
@@ -183,7 +184,8 @@ export async function chatJSON<T>({ system, prompt, schema, temperature = 0 }: C
             try {
               const data = JSON.parse(line);
               if (data.type === 'text-delta') {
-                content += data.textDelta;
+                const chunk = data.textDelta ?? data.text ?? data.delta ?? (typeof data.content === 'string' ? data.content : '');
+                if (chunk) content += chunk;
               }
             } catch (e) { /* skip non-JSON lines */ }
           }
@@ -411,7 +413,8 @@ export async function* chatStream({ system, messages, tools }: ChatStreamOptions
         try {
           const data = JSON.parse(line);
           if (data.type === 'text-delta') {
-            yield data.textDelta;
+            const chunk = data.textDelta ?? data.text ?? data.delta ?? (typeof data.content === 'string' ? data.content : '');
+            if (chunk) yield chunk;
           }
         } catch (e) { /* skip non-JSON lines */ }
       }
