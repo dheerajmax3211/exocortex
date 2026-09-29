@@ -52,7 +52,8 @@ export default function SearchOverlay({ isOpen, onClose, onSelectNode }: SearchO
     try {
       const res = await fetch(`/api/entities?search=${encodeURIComponent(q)}`)
       const data = await res.json()
-      setResults(data)
+      const list = Array.isArray(data) ? data : data.entities || data.data || []
+      setResults(list)
     } catch (err) {
       console.error(err)
     } finally {

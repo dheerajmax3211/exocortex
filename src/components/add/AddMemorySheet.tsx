@@ -73,6 +73,34 @@ export default function AddMemorySheet({ isOpen, onClose }: AddMemorySheetProps)
       }
       
       const data = await res.json()
+
+      const isAutoSave = typeof window !== 'undefined' && localStorage.getItem('autoSave') === 'true'
+      const extraction = data?.extraction
+      const hasQuestions = extraction?.questions && extraction.questions.length > 0
+      const hasAmbiguousEntities = (extraction?.entities || []).some((ent: any) => 
+        ent.match === null && (data?.candidates || []).length > 1
+      )
+
+      if (isAutoSave && !hasQuestions && !hasAmbiguousEntities) {
+        const commitRes = await fetch('/api/ingest/commit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entry_id: data.entry_id,
+            entities: extraction?.entities || [],
+            edges: extraction?.edges || [],
+            facts: extraction?.facts || [],
+            event_date: extraction?.event_date || null
+          })
+        })
+        if (commitRes.ok) {
+          setText('')
+          onClose()
+          window.location.reload()
+          return
+        }
+      }
+
       setExtractedData(data)
       setShowReview(true)
     } catch (err) {

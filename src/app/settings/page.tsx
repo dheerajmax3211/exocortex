@@ -6,6 +6,7 @@ import Link from 'next/link'
 
 export default function SettingsPage() {
   const [speakAsMe, setSpeakAsMe] = useState(false)
+  const [autoSave, setAutoSave] = useState(false)
   const [theme, setTheme] = useState('dark')
   const [info, setInfo] = useState<any>(null)
   const [isReprocessing, setIsReprocessing] = useState(false)
@@ -14,6 +15,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setSpeakAsMe(localStorage.getItem('speakAsMe') === 'true')
+    setAutoSave(localStorage.getItem('autoSave') === 'true')
     setTheme(localStorage.getItem('theme') || 'dark')
 
     fetch('/api/settings/info')
@@ -26,6 +28,12 @@ export default function SettingsPage() {
     const val = e.target.checked
     setSpeakAsMe(val)
     localStorage.setItem('speakAsMe', String(val))
+  }
+
+  const handleAutoSaveToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.checked
+    setAutoSave(val)
+    localStorage.setItem('autoSave', String(val))
   }
 
   const handleThemeToggle = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -169,10 +177,21 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <div className="text-white font-medium text-sm">Speak-as-me Mode</div>
-                <div className="text-xs text-white/50 mt-0.5">Render Ask answers in 1st person ("I visited...")</div>
+                <div className="text-xs text-white/50 mt-0.5">Render Ask answers in 1st person (&quot;I visited...&quot;)</div>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" className="sr-only peer" checked={speakAsMe} onChange={handleSpeakAsMeToggle} />
+                <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <div className="text-white font-medium text-sm">Auto-save Confident Memories</div>
+                <div className="text-xs text-white/50 mt-0.5">Skip review sheet when there are no ambiguities or questions</div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" className="sr-only peer" checked={autoSave} onChange={handleAutoSaveToggle} />
                 <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
               </label>
             </div>

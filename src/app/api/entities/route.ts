@@ -23,23 +23,25 @@ export async function GET(req: Request) {
       .select('id, name, type, summary', { count: 'exact' })
       .eq('user_id', user.id);
 
+    query = query.is('deleted_at', null);
+
     if (type) {
       query = query.eq('type', type);
     }
 
     if (search) {
-      // Basic ilike or trigram if extension loaded
       query = query.ilike('name', `%${search}%`);
     }
 
-    query = query.range(offset, offset + limit - 1).order('updated_at', { ascending: false });
+    query = query.range(offset, offset + limit - 1).order('created_at', { ascending: false });
 
     const { data, count, error } = await query;
 
     if (error) throw error;
 
     return NextResponse.json({
-      data,
+      data: data || [],
+      entities: data || [],
       meta: {
         total: count,
         page,

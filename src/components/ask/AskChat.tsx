@@ -30,17 +30,22 @@ export default function AskChat() {
     setIsLoading(true);
 
     try {
+      const speakAsMe = typeof window !== 'undefined' && localStorage.getItem('speakAsMe') === 'true';
       const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [...messages, userMessage] })
+        body: JSON.stringify({ 
+          messages: [...messages, userMessage],
+          speak_as_me: speakAsMe
+        })
       });
       const data = await res.json();
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: data.content,
-        citations: data.citations
+        citations: data.citations || [],
+        isNotRecorded: data.isNotRecorded
       };
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (err) {
@@ -73,9 +78,13 @@ export default function AskChat() {
                 {msg.citations && msg.citations.length > 0 && (
                   <div className="mt-3 flex gap-2 flex-wrap">
                     {msg.citations.map((cit, i) => (
-                      <span key={i} className="text-xs bg-black/40 text-white/60 px-2 py-1 rounded-md hover:text-white cursor-pointer transition-colors">
+                      <a 
+                        key={i} 
+                        href={`/timeline?search=${encodeURIComponent(cit)}`}
+                        className="text-xs bg-black/40 text-indigo-300 hover:text-white px-2 py-1 rounded-md border border-white/10 transition-colors inline-block"
+                      >
                         [{cit}]
-                      </span>
+                      </a>
                     ))}
                   </div>
                 )}

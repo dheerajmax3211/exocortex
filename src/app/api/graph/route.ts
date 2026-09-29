@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { getOrCreateMeEntity } from '@/lib/db';
 
 export async function GET(req: Request) {
   try {
@@ -10,11 +11,28 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Ensure root "Me" entity and layout coordinate exist
+    const me = await getOrCreateMeEntity(supabase, user.id);
+    const { data: meLayout } = await supabase
+      .from('graph_layout')
+      .select('entity_id')
+      .eq('entity_id', me.id)
+      .maybeSingle();
+
+    if (!meLayout) {
+      await supabase.from('graph_layout').insert({
+        entity_id: me.id,
+        user_id: user.id,
+        x: 0,
+        y: 0
+      });
+    }
+
     // Fetch graph layouts (nodes)
-    const { data: nodes, error: nodesError } = await supabase
+    const { data: layouts, error: nodesError } = await supabase
       .from('graph_layout')
       .select(`
-        x, y, fixed,
+        x, y,
         entity:entities ( id, name, type )
       `)
       .eq('user_id', user.id);
@@ -24,19 +42,37 @@ export async function GET(req: Request) {
     // Fetch edges
     const { data: edges, error: edgesError } = await supabase
       .from('edges')
-      .select('src_id, dst_id, relation')
-      .eq('user_id', user.id);
+      .select('src, dst, relation')
+      .eq('user_id', user.id)
+      .is('deleted_at', null);
 
     if (edgesError) throw edgesError;
 
+    const formattedNodes = (layouts || [])
+      .filter((n: any) => n.entity)
+      .map((n: any) => ({
+        id: n.entity.id,
+        x: n.x,
+        y: n.y,
+        label: n.entity.name,
+        type: n.entity.type
+      }));
+
+    const formattedEdges = (edges || []).map((e: any) => ({
+      source: e.src,
+      target: e.dst,
+      relation: e.relation
+    }));
+
     return NextResponse.json({
-      nodes: nodes || [],
-      edges: edges || [],
-      nodeCount: nodes?.length || 0,
-      edgeCount: edges?.length || 0
+      nodes: formattedNodes,
+      edges: formattedEdges,
+      nodeCount: formattedNodes.length,
+      edgeCount: formattedEdges.length
     });
   } catch (error: any) {
     console.error('Graph API error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+

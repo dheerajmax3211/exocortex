@@ -19,14 +19,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'entry_id is required' }, { status: 400 });
     }
 
-    const entityIdMap: Record<string, string> = {}; 
-    const createdEntities = [];
-
-    // Ensure Me entity exists
     const meEntity = await db.getOrCreateMeEntity(supabase, user.id);
+    const entityIdMap: Record<string, string> = {
+      me: meEntity.id,
+      Me: meEntity.id,
+      ME: meEntity.id
+    }; 
+    const createdEntities = [];
 
     // 1. Process entities
     for (const ent of entities || []) {
+      if (ent.temp_id?.toLowerCase() === 'me' || ent.name?.toLowerCase() === 'me') {
+        entityIdMap[ent.temp_id] = meEntity.id;
+        continue;
+      }
       if (ent.match?.existing_id && ent.match.confidence > 0.8) {
         entityIdMap[ent.temp_id] = ent.match.existing_id;
       } else {

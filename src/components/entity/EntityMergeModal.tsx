@@ -30,7 +30,8 @@ export default function EntityMergeModal({ isOpen, onClose, primaryEntity }: Ent
     try {
       const res = await fetch(`/api/entities?search=${encodeURIComponent(q)}`)
       const data = await res.json()
-      setResults(data.filter((e: any) => e.id !== primaryEntity.id))
+      const list = Array.isArray(data) ? data : data.entities || data.data || []
+      setResults(list.filter((e: any) => e.id !== primaryEntity.id))
     } catch (err) {
       console.error(err)
     } finally {

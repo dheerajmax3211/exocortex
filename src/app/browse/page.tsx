@@ -31,7 +31,8 @@ export default function BrowsePage() {
         const res = await fetch(`/api/entities?${query.toString()}`)
         if (res.ok) {
           const data = await res.json()
-          setEntities(data.entities || [])
+          const list = Array.isArray(data) ? data : data.entities || data.data || []
+          setEntities(list)
         }
       } catch (err) {
         console.error(err)
