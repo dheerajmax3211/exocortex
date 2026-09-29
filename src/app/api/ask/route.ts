@@ -13,8 +13,32 @@ export async function POST(req: Request) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
     }
 
-    const { messages, speak_as_me } = await req.json();
-    const latestUserMessage = [...messages].reverse().find((m: any) => m.role === 'user')?.content || '';
+    const { messages, speak_as_me, image } = await req.json();
+    const lastUserMsgObj = [...messages].reverse().find((m: any) => m.role === 'user');
+    const latestUserMessage = typeof lastUserMsgObj?.content === 'string' 
+      ? lastUserMsgObj.content 
+      : (Array.isArray(lastUserMsgObj?.content) ? lastUserMsgObj.content.find((p: any) => p.type === 'text')?.text : '') || '';
+    const imageUrl = image || lastUserMsgObj?.image;
+
+    // 0. Check if the query is an Alive Intelligence evaluation (person, image, vibe, or inner voice)
+    const { checkAndHandleAliveEvaluation } = await import('@/lib/alive-intelligence');
+    const aliveResult = await checkAndHandleAliveEvaluation(
+      latestUserMessage,
+      imageUrl,
+      messages.slice(0, -1),
+      supabase,
+      speak_as_me ?? true
+    );
+    if (aliveResult.isAliveEvaluation && aliveResult.content) {
+      return new Response(JSON.stringify({
+        content: aliveResult.content,
+        toolCalls: [],
+        citations: aliveResult.citations || [],
+        isNotRecorded: false
+      }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     // 1. Check if the query is a "Would I like X?" taste prediction query
     const tasteResult = await checkAndHandleTastePrediction(latestUserMessage, supabase, speak_as_me);

@@ -1,8 +1,14 @@
 import { ZodSchema } from 'zod';
 
+export interface ContentPart {
+  type: 'text' | 'image_url';
+  text?: string;
+  image_url?: { url: string };
+}
+
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: string | ContentPart[] | any;
   tool_call_id?: string;
   name?: string;
   tool_calls?: any[];
@@ -69,13 +75,27 @@ function formatCCMessage(msg: Message) {
         type: 'tool-result',
         toolCallId: msg.tool_call_id,
         toolName: msg.name,
-        output: { type: 'text', value: msg.content }
+        output: { type: 'text', value: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) }
       }]
     };
   }
+
+  let contentParts: any[] = [];
+  if (Array.isArray(msg.content)) {
+    contentParts = msg.content.map((part: any) => {
+      if (typeof part === 'string') return { type: 'text', text: part };
+      if (part.type === 'image_url') {
+        return { type: 'image', image: part.image_url?.url || '' };
+      }
+      return { type: 'text', text: part.text || ' ' };
+    });
+  } else {
+    contentParts = [{ type: 'text', text: msg.content || ' ' }];
+  }
+
   return {
     role: msg.role === 'system' ? 'user' : msg.role,
-    content: [{ type: 'text', text: msg.content || ' ' }]
+    content: contentParts
   };
 }
 
