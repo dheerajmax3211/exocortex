@@ -10,10 +10,10 @@ export default function FloatingAddButton() {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-[96px] right-6 z-40 w-14 h-14 rounded-full bg-[var(--accent)] text-white shadow-lg flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
+        className="fixed right-6 z-40 w-14 h-14 rounded-full bg-[var(--accent)] text-white shadow-lg flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
         style={{
+          bottom: 'calc(92px + env(safe-area-inset-bottom))',
           boxShadow: '0 4px 20px var(--accent-glow)',
-          paddingBottom: 'env(safe-area-inset-bottom)',
         }}
         aria-label="Add Memory"
       >

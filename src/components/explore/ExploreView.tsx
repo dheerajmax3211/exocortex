@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import HUD from './HUD'
 import ExploreCanvas from './ExploreCanvas'
 import Navigation from '@/components/ui/Navigation'
@@ -19,6 +19,17 @@ export default function ExploreView({ nodeCount, edgeCount }: ExploreViewProps) 
   const [isOnThisDayOpen, setIsOnThisDayOpen] = useState(false)
   const [profileEntityId, setProfileEntityId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setIsSearchOpen(prev => !prev)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-between bg-[#0a0a0f] text-white overflow-hidden relative">

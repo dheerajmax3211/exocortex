@@ -28,7 +28,14 @@ export default function AskChat() {
     if (saved !== null) {
       setSpeakAsMe(saved === 'true');
     }
-    setSpeechSupported(typeof window !== 'undefined' && 'speechSynthesis' in window);
+    const supported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+    setSpeechSupported(supported);
+    if (supported) {
+      window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.getVoices();
+      };
+    }
   }, []);
 
   const toggleSpeakAsMe = () => {
@@ -98,7 +105,37 @@ export default function AskChat() {
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      setAttachedImage(event.target?.result as string);
+      const rawDataUrl = event.target?.result as string;
+      // Downscale and compress to keep payload safely within serverless limits (<400KB)
+      const img = new Image();
+      img.onload = () => {
+        const MAX_DIM = 1280;
+        let { width, height } = img;
+        if (width > MAX_DIM || height > MAX_DIM) {
+          if (width > height) {
+            height = Math.round((height * MAX_DIM) / width);
+            width = MAX_DIM;
+          } else {
+            width = Math.round((width * MAX_DIM) / height);
+            height = MAX_DIM;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', 0.85);
+          setAttachedImage(compressed);
+        } else {
+          setAttachedImage(rawDataUrl);
+        }
+      };
+      img.onerror = () => {
+        setAttachedImage(rawDataUrl);
+      };
+      img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
   };
@@ -150,6 +187,14 @@ export default function AskChat() {
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (err) {
       console.error(err);
+      const fallbackMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: speakAsMe 
+          ? "I hit a momentary glitch processing that memory. Give me just a second and try asking me again."
+          : "Encountered a momentary connection error while accessing your memory network. Please try again in a moment.",
+      };
+      setMessages((prev) => [...prev, fallbackMsg]);
     } finally {
       setIsLoading(false);
     }
