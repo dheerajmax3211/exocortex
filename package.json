@@ -7,6 +7,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "test:llm": "tsx scripts/test-llm.ts",
+    "test:engine": "tsx scripts/test-twin-engine.ts",
     "lint": "eslint"
   },
   "dependencies": {
