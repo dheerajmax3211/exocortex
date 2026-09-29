@@ -50,9 +50,10 @@ Hosted **100% free** on **Vercel Hobby** and **Supabase Free Tier**.
 
 ### Step 2: Run the SQL Migrations
 1. In the Supabase dashboard, click **SQL Editor** on the left menu.
-2. Open [`supabase/migrations/001_init.sql`](supabase/migrations/001_init.sql) in this repository, copy its entire contents, paste it into the SQL Editor, and click **Run**.
+2. Open [`supabase/migrations/001_init.sql`](supabase/migrations/001_init.sql), copy its entire contents, paste it into the SQL Editor, and click **Run**.
 3. Open [`supabase/migrations/002_reviews.sql`](supabase/migrations/002_reviews.sql), copy its contents, paste, and click **Run**.
-4. Check **Table Editor** on the left to verify all tables (`entries`, `entities`, `edges`, `facts`, `entry_entities`, `graph_layout`, `reviews`) were created.
+4. Open [`supabase/migrations/003_advanced_memory_graph.sql`](supabase/migrations/003_advanced_memory_graph.sql) (for 384-dim pgvector, bi-temporal versioning, cognitive clusters, and hybrid GraphRAG), copy, and click **Run**.
+5. Check **Table Editor** to verify all tables (`entries`, `entities`, `edges`, `facts`, `entry_entities`, `graph_layout`, `reviews`, `clusters`) were created.
 
 ### Step 3: Configure Authentication
 1. Go to **Authentication** → **Providers** in Supabase:
