@@ -2,24 +2,18 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import ExploreView from '@/components/explore/ExploreView'
 
+import { getOrCreateMeEntity } from '@/lib/db'
+
 export default async function Home() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
 
-  // Ensure root Me entity and its graph_layout exist
-  const { data: me } = await supabase.from('entities').select('id').eq('user_id', user.id).eq('name', 'Me').maybeSingle()
-  if (!me) {
-    const { data: newMe } = await supabase.from('entities').insert({
-      user_id: user.id,
-      name: 'Me',
-      type: 'person',
-      aliases: ['me', 'i', 'myself'],
-      summary: 'The user'
-    }).select('id').single()
-    if (newMe) {
-      await supabase.from('graph_layout').insert({ entity_id: newMe.id, user_id: user.id, x: 0, y: 0 })
-    }
+  // Ensure root user entity and its graph_layout exist
+  const me = await getOrCreateMeEntity(supabase, user.id)
+  const { data: meLayout } = await supabase.from('graph_layout').select('entity_id').eq('entity_id', me.id).maybeSingle()
+  if (!meLayout) {
+    await supabase.from('graph_layout').insert({ entity_id: me.id, user_id: user.id, x: 0, y: 0 })
   }
 
   // Fetch counts for HUD

@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { chatWithTools, Message } from './llm';
 import { ASK_TOOLS, executeAskTool } from './llm-tools';
+import { getOrCreateMeEntity } from './db';
 
 export interface AliveEvaluationResult {
   isAliveEvaluation: boolean;
@@ -16,13 +17,8 @@ export async function compileAlivePersonaContext(supabase: SupabaseClient) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
-  // 1. Fetch Root 'Me' and user facts
-  const { data: me } = await supabase
-    .from('entities')
-    .select('id, name, summary, props')
-    .eq('user_id', user.id)
-    .eq('name', 'Me')
-    .maybeSingle();
+  // 1. Fetch Root user entity and user facts
+  const me = await getOrCreateMeEntity(supabase, user.id);
 
   const { data: userFacts } = await supabase
     .from('facts')
@@ -35,7 +31,7 @@ export async function compileAlivePersonaContext(supabase: SupabaseClient) {
     .select('id, name, summary, props')
     .eq('user_id', user.id)
     .eq('type', 'person')
-    .neq('name', 'Me')
+    .neq('id', me.id)
     .is('deleted_at', null)
     .limit(30);
 

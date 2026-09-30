@@ -94,6 +94,9 @@ export async function POST(req: Request) {
       });
     }
 
+    const { getOrCreateMeEntity } = await import('@/lib/db');
+    const me = await getOrCreateMeEntity(supabase, user.id);
+
     // Fetch user's known life periods to resolve relative dates like "in 8th grade"
     const { data: periods } = await supabase
       .from('entities')
@@ -102,12 +105,28 @@ export async function POST(req: Request) {
       .eq('type', 'period')
       .is('deleted_at', null);
 
+    // Always include the user entity as candidate
+    candidates.unshift({
+      id: me.id,
+      type: 'person',
+      name: me.name,
+      aliases: me.aliases || ['me', 'i', 'myself'],
+      summary: 'The user / author of these memories'
+    });
+
     const currentIst = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
     const currentDay = new Date().toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
 
     // 3. One LLM call with current time, raw text, candidates, and periods
     const systemPrompt = `You are the knowledge graph extraction engine for Virtual Brain (a personal memory graph system).
 Current Time in IST: ${currentIst} (${currentDay}).
+
+ROOT USER IDENTITY (CRITICAL):
+- The author/owner of this brain is: "${me.name}" (ID: "${me.id}", Aliases: ${JSON.stringify(me.aliases || [])}).
+- When the memory refers to "I", "me", "my", "myself", or the user states their name/identity (e.g. "I am ${me.name}", "I was born on...", "My name is..."), they are ALWAYS the root user.
+- NEVER create a separate 'person' entity for the user! Use temp_id='me' for the user.
+- If the user states their name, birth date, or biographical details, attach them as facts to temp_id='me' (e.g. key='full_name', value='...', key='birth_date', value='YYYY-MM-DD').
+- Life events relating to the user (e.g. "Birth of...", "Graduated from...") should connect via an edge directly to temp_id='me'.
 
 EXTRACTION RULES:
 1. Dates:
@@ -117,9 +136,9 @@ EXTRACTION RULES:
    - If truly undatable: date_precision='unknown', event_date=null.
 
 2. Modeling Rules:
-   - Events are entities (type='event') with date; participants and place attach via edges (attended_with, at).
+   - Events are entities (type='event') with date; participants and place attach via edges (attended_with, at, involves).
    - Restaurant -> dish is an edge 'served' or 'tried' with props: rating_10 (number /10 if explicitly stated), sentiment ('good'|'bad'|'neutral'), quote (original verbatim words). NEVER invent a number rating. If user says "amazing" or "good" -> sentiment='good', rating_10=null. If "bad" -> sentiment='bad'.
-   - Movies/shows/books: type='movie'|'show'|'book' with edge 'watched'|'read' from Me, occurred_on, rating_10, sentiment, quote.
+   - Movies/shows/books: type='movie'|'show'|'book' with edge 'watched'|'read' from Me (temp_id: 'me'), occurred_on, rating_10, sentiment, quote.
    - Life periods: type='period' (e.g. "8th grade", "MSc") with date ranges. People/schools attach via edges: taught (props.subject), classmate_of, studied_at.
    - People: type='person'.
 

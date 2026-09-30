@@ -228,14 +228,34 @@ export async function getEntityCounts(supabase: SupabaseClient): Promise<Record<
 
 // --- Advanced / Root ---
 export async function getOrCreateMeEntity(supabase: SupabaseClient, userId: string): Promise<Entity> {
-  let { data: me, error } = await supabase.from('entities').select().eq('user_id', userId).eq('name', 'Me').eq('type', 'person').maybeSingle()
+  // First check if an entity flagged as the user exists
+  let { data: me } = await supabase
+    .from('entities')
+    .select()
+    .eq('user_id', userId)
+    .eq('props->>is_user', 'true')
+    .maybeSingle()
+
+  // Fallback to name 'Me'
+  if (!me) {
+    const { data: meByName } = await supabase
+      .from('entities')
+      .select()
+      .eq('user_id', userId)
+      .eq('name', 'Me')
+      .maybeSingle()
+    me = meByName
+  }
+
+  // Create root identity if neither exists
   if (!me) {
     const { data: newMe, error: err2 } = await supabase.from('entities').insert({
       user_id: userId,
       name: 'Me',
       type: 'person',
       aliases: ['me', 'i', 'myself'],
-      summary: 'The user'
+      summary: 'The user',
+      props: { is_user: true }
     }).select().single()
     if (err2) throw err2
     me = newMe

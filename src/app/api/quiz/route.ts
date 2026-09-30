@@ -34,13 +34,16 @@ export async function GET() {
       targetEntityId = dueReview.entity_id;
       questionType = dueReview.question_type;
     } else {
+      const { getOrCreateMeEntity } = await import('@/lib/db');
+      const me = await getOrCreateMeEntity(supabase, user.id);
+
       // Pick a random entity with edges or facts
       const { data: randomEntities } = await supabase
         .from('entities')
         .select('id, name, type, summary, props')
         .eq('user_id', user.id)
         .is('deleted_at', null)
-        .neq('name', 'Me')
+        .neq('id', me.id)
         .limit(20);
 
       if (!randomEntities || randomEntities.length === 0) {

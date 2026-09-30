@@ -25,14 +25,42 @@ export async function POST(req: Request) {
       Me: meEntity.id,
       ME: meEntity.id
     }; 
+    if (meEntity.name) {
+      entityIdMap[meEntity.name.toLowerCase()] = meEntity.id;
+    }
+    for (const a of meEntity.aliases || []) {
+      entityIdMap[a.toLowerCase()] = meEntity.id;
+    }
+
     const createdEntities = [];
 
     // 1. Process entities
     for (const ent of entities || []) {
-      if (ent.temp_id?.toLowerCase() === 'me' || ent.name?.toLowerCase() === 'me') {
+      const isMe = 
+        ent.temp_id?.toLowerCase() === 'me' || 
+        ent.name?.toLowerCase() === 'me' ||
+        ent.name?.toLowerCase() === meEntity.name?.toLowerCase() ||
+        (meEntity.aliases || []).some(a => a.toLowerCase() === ent.name?.toLowerCase()) ||
+        ent.match?.existing_id === meEntity.id;
+
+      if (isMe) {
         entityIdMap[ent.temp_id] = meEntity.id;
+        const updates: any = {};
+        if (ent.name && ent.name.toLowerCase() !== 'me' && (!meEntity.name || meEntity.name === 'Me')) {
+          updates.name = ent.name;
+        }
+        if (ent.aliases && ent.aliases.length > 0) {
+          updates.aliases = Array.from(new Set([...(meEntity.aliases || []), ...ent.aliases, ent.name].filter(Boolean)));
+        }
+        if (ent.props && Object.keys(ent.props).length > 0) {
+          updates.props = { ...(meEntity.props || {}), is_user: true, ...ent.props };
+        }
+        if (Object.keys(updates).length > 0) {
+          await db.updateEntity(supabase, meEntity.id, updates);
+        }
         continue;
       }
+
       if (ent.match?.existing_id && ent.match.confidence > 0.8) {
         entityIdMap[ent.temp_id] = ent.match.existing_id;
       } else {

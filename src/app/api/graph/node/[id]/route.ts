@@ -50,25 +50,36 @@ export async function GET(
         }
       }
     } else if (entity.type === 'person') {
-      // Find relation like taught or classmate_of
-      const { data: relations } = await supabase
-        .from('edges')
-        .select('relation, props, occurred_on, dst:entities!edges_dst_fkey(name)')
-        .or(`src.eq.${id},dst.eq.${id}`)
-        .eq('user_id', user.id)
-        .is('deleted_at', null)
-        .limit(3);
-
-      if (relations && relations.length > 0) {
-        const rel = relations[0];
-        if (rel.relation === 'taught' && rel.props?.subject) {
-          factLine = `Taught ${rel.props.subject}`;
-        } else if (rel.relation === 'classmate_of') {
-          factLine = `Classmate in ${(rel.dst as any)?.name || 'school'}`;
-        } else if (rel.occurred_on) {
-          factLine = `Last seen on ${rel.occurred_on}`;
+      const isUser = entity.props?.is_user || entity.name === 'Me';
+      if (isUser) {
+        if (entity.props?.birth_date) {
+          factLine = `Born on ${entity.props.birth_date}`;
+        } else if (entity.summary) {
+          factLine = entity.summary;
         } else {
-          factLine = `Connected via: ${rel.relation.replace(/_/g, ' ')}`;
+          factLine = 'Digital Twin (You)';
+        }
+      } else {
+        // Find relation like taught or classmate_of
+        const { data: relations } = await supabase
+          .from('edges')
+          .select('relation, props, occurred_on, dst:entities!edges_dst_fkey(name)')
+          .or(`src.eq.${id},dst.eq.${id}`)
+          .eq('user_id', user.id)
+          .is('deleted_at', null)
+          .limit(3);
+
+        if (relations && relations.length > 0) {
+          const rel = relations[0];
+          if (rel.relation === 'taught' && rel.props?.subject) {
+            factLine = `Taught ${rel.props.subject}`;
+          } else if (rel.relation === 'classmate_of') {
+            factLine = `Classmate in ${(rel.dst as any)?.name || 'school'}`;
+          } else if (rel.occurred_on) {
+            factLine = `Last seen on ${rel.occurred_on}`;
+          } else {
+            factLine = `Connected via: ${rel.relation.replace(/_/g, ' ')}`;
+          }
         }
       }
     } else if (entity.type === 'movie' || entity.type === 'book') {

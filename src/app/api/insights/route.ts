@@ -16,11 +16,14 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { getOrCreateMeEntity } = await import('@/lib/db');
+    const me = await getOrCreateMeEntity(supabase, user.id);
+
     // 1. Compute real statistical aggregates from Postgres
     const [countsRes, topRestaurantsRes, topPeopleRes, ratedDishesRes, recentMonthsRes] = await Promise.all([
       supabase.from('entities').select('type', { count: 'exact' }).eq('user_id', user.id).is('deleted_at', null),
       supabase.from('entities').select('name').eq('user_id', user.id).eq('type', 'restaurant').limit(10),
-      supabase.from('entities').select('name').eq('user_id', user.id).eq('type', 'person').neq('name', 'Me').limit(10),
+      supabase.from('entities').select('name').eq('user_id', user.id).eq('type', 'person').neq('id', me.id).limit(10),
       supabase.from('edges').select('props, dst:entities!edges_dst_fkey(name)').eq('user_id', user.id).eq('relation', 'tried').not('props->>rating_10', 'is', null).limit(10),
       supabase.from('entries').select('event_date, entered_at').eq('user_id', user.id).order('entered_at', { ascending: false }).limit(50)
     ]);
