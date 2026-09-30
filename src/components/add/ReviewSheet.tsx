@@ -176,6 +176,29 @@ export default function ReviewSheet({ isOpen, onClose, data, onEdit }: ReviewShe
           </ul>
         </section>
 
+        {/* Facts & Attributes Section */}
+        {extraction.facts?.length > 0 && (
+          <section className="space-y-3">
+            <h3 className="text-xs font-mono uppercase tracking-wider text-white/60">
+              Grounded Facts & Attributes ({extraction.facts.length})
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {extraction.facts.map((fact: any, i: number) => {
+                const entName = extraction.entities?.find((e: any) => e.temp_id === fact.entity_temp_id)?.name || 'Dheeraj Srinivasa'
+                return (
+                  <div key={i} className="text-xs p-3 rounded-xl bg-white/5 border border-white/10 flex flex-col gap-1">
+                    <div className="flex items-center justify-between text-white/50 font-mono text-[10px]">
+                      <span className="text-indigo-400 font-semibold">{fact.key.replace(/_/g, ' ').toUpperCase()}</span>
+                      <span className="truncate max-w-[120px] text-white/40">{entName}</span>
+                    </div>
+                    <div className="text-white/90 font-medium leading-relaxed">{fact.value}</div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
         {/* Clarifying Questions from LLM */}
         {extraction.questions?.length > 0 && (
           <section className="space-y-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
