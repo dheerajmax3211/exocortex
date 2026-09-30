@@ -36,7 +36,35 @@ export default function AskChat() {
         window.speechSynthesis.getVoices();
       };
     }
+
+    try {
+      const savedMessages = sessionStorage.getItem('virtual_twin_messages');
+      if (savedMessages) {
+        setMessages(JSON.parse(savedMessages));
+      }
+    } catch (e) {}
   }, []);
+
+  useEffect(() => {
+    try {
+      if (messages.length > 0) {
+        sessionStorage.setItem('virtual_twin_messages', JSON.stringify(messages));
+      } else {
+        sessionStorage.removeItem('virtual_twin_messages');
+      }
+    } catch (e) {}
+  }, [messages]);
+
+  const handleClearChat = () => {
+    if (activeSpeechId) {
+      window.speechSynthesis.cancel();
+      setActiveSpeechId(null);
+    }
+    setMessages([]);
+    try {
+      sessionStorage.removeItem('virtual_twin_messages');
+    } catch (e) {}
+  };
 
   const toggleSpeakAsMe = () => {
     const next = !speakAsMe;
@@ -217,12 +245,23 @@ export default function AskChat() {
             {speakAsMe ? 'Virtual Me (Digital Twin Active)' : 'Virtual Assistant (Third-Person)'}
           </span>
         </div>
-        <button 
-          onClick={toggleSpeakAsMe}
-          className="text-[11px] text-indigo-300 hover:text-white underline transition-colors"
-        >
-          {speakAsMe ? 'Switch to 3rd Person' : 'Switch to 1st Person'}
-        </button>
+        <div className="flex items-center gap-3">
+          {messages.length > 0 && (
+            <button
+              onClick={handleClearChat}
+              className="text-[11px] text-white/40 hover:text-red-400 transition-colors"
+              title="Reset conversation"
+            >
+              Clear Chat
+            </button>
+          )}
+          <button 
+            onClick={toggleSpeakAsMe}
+            className="text-[11px] text-indigo-300 hover:text-white underline transition-colors"
+          >
+            {speakAsMe ? 'Switch to 3rd Person' : 'Switch to 1st Person'}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-6 py-4 hide-scrollbar">

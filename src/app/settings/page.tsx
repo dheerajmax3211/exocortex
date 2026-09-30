@@ -122,7 +122,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#0a0a0f] text-white p-4 pb-28">
+    <main className="flex min-h-screen flex-col bg-[#0a0a0f] text-white p-4 pb-32 overflow-y-auto">
       <div className="max-w-xl mx-auto w-full">
         <h1 className="text-3xl font-serif font-bold mb-6 text-white">Settings & Facilities</h1>
 

@@ -50,7 +50,7 @@ export default function BrowsePage() {
   }, [type, search])
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#0a0a0f] text-white p-4 pb-24">
+    <main className="flex min-h-screen flex-col bg-[#0a0a0f] text-white p-4 pb-28 overflow-y-auto">
       <h1 className="text-3xl font-bold mb-6">Browse Entities</h1>
       
       <div className="flex flex-col gap-4 mb-6">
