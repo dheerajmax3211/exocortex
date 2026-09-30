@@ -91,15 +91,16 @@ export async function POST(req: Request) {
     }
 
     // 4. Link entry_entities
-    for (const realId of Object.values(entityIdMap)) {
+    const uniqueEntityIds = Array.from(new Set(Object.values(entityIdMap).filter(Boolean)));
+    for (const realId of uniqueEntityIds) {
       await db.linkEntryEntity(supabase, {
         entry_id: entry_id,
         entity_id: realId
-      });
+      }).catch(e => console.log('Already linked:', e.message));
     }
 
     // Link events to Me if event_date provided
-    if (event_date) {
+    if (event_date && !uniqueEntityIds.includes(meEntity.id)) {
       await db.linkEntryEntity(supabase, {
         entry_id: entry_id,
         entity_id: meEntity.id

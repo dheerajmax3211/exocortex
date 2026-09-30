@@ -140,9 +140,13 @@ export async function getFactsForEntity(supabase: SupabaseClient, entityId: stri
 
 // --- Links & Intersections ---
 export async function linkEntryEntity(supabase: SupabaseClient, link: EntryEntity): Promise<EntryEntity> {
-  const { data, error } = await supabase.from('entry_entities').insert(link).select().single()
-  if (error) throw error
-  return data
+  const { data, error } = await supabase
+    .from('entry_entities')
+    .upsert(link, { onConflict: 'entry_id, entity_id', ignoreDuplicates: true })
+    .select()
+    .maybeSingle()
+  if (error && error.code !== '23505') throw error
+  return data as any
 }
 
 export async function getEntriesForEntity(supabase: SupabaseClient, entityId: string): Promise<Entry[]> {
