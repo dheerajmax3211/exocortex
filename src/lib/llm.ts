@@ -1,4 +1,4 @@
-import { ZodSchema } from 'zod';
+import type { ZodSchema } from 'zod';
 
 export interface ContentPart {
   type: 'text' | 'image_url';
@@ -65,6 +65,49 @@ function cleanJSON(text: string): string {
     cleaned = cleaned.replace(/^```\n?/, '').replace(/\n?```$/, '');
   }
   return cleaned;
+}
+
+function parseDSMLToolCalls(content: string): { toolCalls: { id: string, name: string, args: Record<string, any> }[], cleanContent: string } {
+  const toolCalls: { id: string, name: string, args: Record<string, any> }[] = [];
+  let cleanContent = content;
+
+  // Match: < | DSML | invoke name="find_entities"> ... </ | DSML | invoke>
+  const invokeRegex = /<\s*\|\s*DSML\s*\|\s*invoke\s+name="([^"]+)"\s*>([\s\S]*?)(?:<\s*\/\s*\|\s*DSML\s*\|\s*invoke\s*>|$)/gi;
+  let invMatch: RegExpExecArray | null;
+  while ((invMatch = invokeRegex.exec(content)) !== null) {
+    const toolName = invMatch[1].trim();
+    const paramsContent = invMatch[2];
+    const args: Record<string, any> = {};
+
+    const paramRegex = /<\s*\|\s*DSML\s*\|\s*parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\s*\/\s*\|\s*DSML\s*\|\s*parameter\s*>/gi;
+    let pMatch: RegExpExecArray | null;
+    while ((pMatch = paramRegex.exec(paramsContent)) !== null) {
+      const pName = pMatch[1].trim();
+      let pVal: any = pMatch[2].trim();
+      try {
+        pVal = JSON.parse(pVal);
+      } catch {
+        // Keep as string
+      }
+      args[pName] = pVal;
+    }
+
+    toolCalls.push({
+      id: 'call_' + Math.random().toString(36).substring(2, 10),
+      name: toolName,
+      args
+    });
+  }
+
+  // Strip all DSML tags and markup from cleanContent
+  cleanContent = cleanContent
+    .replace(/<\s*\|\s*DSML\s*\|\s*calls\s*>[\s\S]*?<\s*\/\s*\|\s*DSML\s*\|\s*calls\s*>/gi, '')
+    .replace(/<\s*\|\s*DSML\s*\|\s*invoke[\s\S]*?<\s*\/\s*\|\s*DSML\s*\|\s*invoke\s*>/gi, '')
+    .replace(/<\s*\|\s*DSML\s*\|[\s\S]*?>/gi, '')
+    .replace(/<\s*\/\s*\|\s*DSML\s*\|[\s\S]*?>/gi, '')
+    .trim();
+
+  return { toolCalls, cleanContent };
 }
 
 function formatCCMessage(msg: Message) {
@@ -168,7 +211,7 @@ export async function chatJSON<T>({ system, prompt, schema, temperature = 0 }: C
 
   while (attempt < 2) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
+    const timeout = setTimeout(() => controller.abort(), 90000);
 
     try {
       let content = '';
@@ -366,6 +409,15 @@ export async function chatWithTools({ system, messages, tools, maxSteps = 6, exe
 
       clearTimeout(timeout);
 
+      // DeepSeek on Command Code can stream raw DSML tool call tokens inside text-delta
+      if (finalContent.includes('DSML')) {
+        const { toolCalls: dsmlCalls, cleanContent } = parseDSMLToolCalls(finalContent);
+        if (dsmlCalls.length > 0) {
+          currentToolCalls.push(...dsmlCalls);
+        }
+        finalContent = cleanContent;
+      }
+
       if (currentToolCalls.length > 0) {
         if (provider === 'commandcode') {
           currentMessages.push({
@@ -398,7 +450,8 @@ export async function chatWithTools({ system, messages, tools, maxSteps = 6, exe
       }
 
       // Final text answer
-      return { content: finalContent, toolCalls: allToolCalls };
+      const cleaned = parseDSMLToolCalls(finalContent).cleanContent;
+      return { content: cleaned, toolCalls: allToolCalls };
     } catch (e) {
       clearTimeout(timeout);
       console.error("[chatWithTools error]", e);
@@ -416,8 +469,9 @@ export async function chatWithTools({ system, messages, tools, maxSteps = 6, exe
         tools: [],
         maxSteps: 1
       });
-      if (finalSynthesis.content && finalSynthesis.content !== '[]') {
-        return { content: finalSynthesis.content, toolCalls: allToolCalls };
+      const synthClean = parseDSMLToolCalls(finalSynthesis.content || '').cleanContent;
+      if (synthClean && synthClean !== '[]') {
+        return { content: synthClean, toolCalls: allToolCalls };
       }
     } catch (e) {
       console.error("[chatWithTools final synthesis error]", e);
@@ -425,7 +479,8 @@ export async function chatWithTools({ system, messages, tools, maxSteps = 6, exe
   }
 
   const lastMsg = currentMessages[currentMessages.length - 1];
-  const lastContent = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
+  const rawLast = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
+  const lastContent = parseDSMLToolCalls(rawLast).cleanContent;
   return { 
     content: (lastContent && lastContent !== '[]') ? lastContent : "I don't have any memories recorded yet. Tap the '+' button or dictate a memory to get started!", 
     toolCalls: allToolCalls 

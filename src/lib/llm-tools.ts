@@ -1,4 +1,4 @@
-import { ToolDef } from './llm';
+import type { ToolDef } from './llm';
 import * as db from '@/lib/db';
 import { SupabaseClient } from '@supabase/supabase-js';
 
@@ -116,18 +116,37 @@ export async function executeAskTool(toolName: string, args: Record<string, any>
     const { data: { user } } = await supabase.auth.getUser();
     const userId = user?.id;
 
+    const query = (args.query || args.p_query || args.text || '').toString().trim();
+    const entityId = (args.id || args.entity_id || args.p_entity_id || '').toString().trim();
+
     switch (toolName) {
-      case 'find_entities':
-        result = await supabase.rpc('search_entities', { p_query: args.query, p_user_id: userId });
+      case 'find_entities': {
+        let { data } = await supabase.rpc('search_entities', { p_query: query, p_user_id: userId });
+        if (!data || data.length === 0) {
+          const words = query.split(/\s+/).filter((w: string) => w.length > 2);
+          if (words.length > 0) {
+            const orFilter = words.map((w: string) => `name.ilike.%${w}%`).join(',');
+            const fallback = await supabase
+              .from('entities')
+              .select('*')
+              .eq('user_id', userId)
+              .is('deleted_at', null)
+              .or(orFilter)
+              .limit(10);
+            data = fallback.data;
+          }
+        }
+        result = data;
         break;
+      }
       case 'get_entity':
-        result = await supabase.rpc('entity_neighborhood', { p_entity_id: args.id, p_user_id: userId });
+        result = await supabase.rpc('entity_neighborhood', { p_entity_id: entityId, p_user_id: userId });
         break;
       case 'list_entities':
-        result = await db.getEntitiesByType(supabase, args.type as any, { limit: args.limit, orderBy: args.order_by });
+        result = await db.getEntitiesByType(supabase, (args.type || args.p_type) as any, { limit: args.limit, orderBy: args.order_by });
         break;
       case 'list_related':
-        result = await supabase.rpc('list_by_relation', { p_entity_id: args.entity_id, p_relation: args.relation, p_user_id: userId });
+        result = await supabase.rpc('list_by_relation', { p_entity_id: entityId, p_relation: args.relation || args.p_relation, p_user_id: userId });
         break;
       case 'events_between':
         result = await db.eventsBetween(supabase, args.start_date, args.end_date);
@@ -135,11 +154,29 @@ export async function executeAskTool(toolName: string, args: Record<string, any>
       case 'events_on':
         result = await db.eventsOn(supabase, args.date);
         break;
-      case 'search_entries':
-        result = await db.searchEntries(supabase, args.text);
+      case 'search_entries': {
+        let entries: any[] = [];
+        try {
+          entries = await db.searchEntries(supabase, query);
+        } catch {}
+        if (!entries || entries.length === 0) {
+          const words = query.split(/\s+/).filter((w: string) => w.length > 2);
+          if (words.length > 0) {
+            const orFilter = words.map((w: string) => `raw_text.ilike.%${w}%`).join(',');
+            const { data } = await supabase
+              .from('entries')
+              .select('*')
+              .eq('user_id', userId)
+              .or(orFilter)
+              .limit(10);
+            entries = data || [];
+          }
+        }
+        result = entries;
         break;
+      }
       case 'get_entries':
-        result = await db.getEntries(supabase, args.ids);
+        result = await db.getEntries(supabase, args.ids || [entityId]);
         break;
       case 'get_taste_profile': {
         const { getFullTasteProfile } = await import('@/lib/taste-prediction');
