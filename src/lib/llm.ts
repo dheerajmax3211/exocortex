@@ -406,7 +406,30 @@ export async function chatWithTools({ system, messages, tools, maxSteps = 6, exe
     }
   }
 
-  return { content: currentMessages[currentMessages.length - 1]?.content || '', toolCalls: allToolCalls };
+  // If the loop finished without generating a final text response (e.g. maxSteps reached on a tool call),
+  // force one final synthesis completion with tools: [] so the model translates the tool findings into a user-facing answer!
+  if (currentMessages[currentMessages.length - 1]?.role === 'tool') {
+    try {
+      const finalSynthesis = await chatWithTools({
+        system,
+        messages: currentMessages,
+        tools: [],
+        maxSteps: 1
+      });
+      if (finalSynthesis.content && finalSynthesis.content !== '[]') {
+        return { content: finalSynthesis.content, toolCalls: allToolCalls };
+      }
+    } catch (e) {
+      console.error("[chatWithTools final synthesis error]", e);
+    }
+  }
+
+  const lastMsg = currentMessages[currentMessages.length - 1];
+  const lastContent = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
+  return { 
+    content: (lastContent && lastContent !== '[]') ? lastContent : "I don't have any memories recorded yet. Tap the '+' button or dictate a memory to get started!", 
+    toolCalls: allToolCalls 
+  };
 }
 
 export async function* chatStream({ system, messages, tools }: ChatStreamOptions): AsyncGenerator<string> {
