@@ -87,6 +87,14 @@ function formatCCMessage(msg: Message) {
       if (part.type === 'image_url') {
         return { type: 'image', image: part.image_url?.url || '' };
       }
+      if (part.type === 'tool-call') {
+        return {
+          type: 'tool-call',
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: part.input || {}
+        };
+      }
       return { type: 'text', text: part.text || ' ' };
     });
   } else {
@@ -288,7 +296,8 @@ export async function chatWithTools({ system, messages, tools, maxSteps = 6, exe
             try {
               const data = JSON.parse(line);
               if (data.type === 'text-delta') {
-                finalContent += data.textDelta;
+                const chunk = data.text ?? data.textDelta ?? data.delta ?? (typeof data.content === 'string' ? data.content : '');
+                if (chunk) finalContent += chunk;
               } else if (data.type === 'tool-call') {
                 activeToolId = data.toolCallId;
                 activeToolName = data.toolName;
@@ -359,7 +368,18 @@ export async function chatWithTools({ system, messages, tools, maxSteps = 6, exe
 
       if (currentToolCalls.length > 0) {
         if (provider === 'commandcode') {
-          currentMessages.push({ role: 'assistant', content: finalContent });
+          currentMessages.push({
+            role: 'assistant',
+            content: [
+              ...(finalContent ? [{ type: 'text', text: finalContent }] : []),
+              ...currentToolCalls.map(tc => ({
+                type: 'tool-call',
+                toolCallId: tc.id,
+                toolName: tc.name,
+                input: tc.args
+              }))
+            ]
+          });
         }
 
         for (const tc of currentToolCalls) {
