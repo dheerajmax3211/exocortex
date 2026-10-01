@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react'
 import BottomSheet from '../ui/BottomSheet'
 import Link from 'next/link'
+import EntityEditModal from '@/components/entity/EntityEditModal'
 
 interface EntityProfileSheetProps {
   entityId: string | null
@@ -13,9 +14,10 @@ interface EntityProfileSheetProps {
 export default function EntityProfileSheet({ entityId, isOpen, onClose }: EntityProfileSheetProps) {
   const [data, setData] = useState<any>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isEditOpen, setIsEditOpen] = useState(false)
 
-  useEffect(() => {
-    if (isOpen && entityId) {
+  const fetchEntity = () => {
+    if (entityId) {
       setIsLoading(true)
       fetch(`/api/entities/${entityId}`)
         .then(res => res.json())
@@ -27,6 +29,12 @@ export default function EntityProfileSheet({ entityId, isOpen, onClose }: Entity
           console.error(err)
           setIsLoading(false)
         })
+    }
+  }
+
+  useEffect(() => {
+    if (isOpen && entityId) {
+      fetchEntity()
     } else {
       setData(null)
     }
@@ -40,37 +48,49 @@ export default function EntityProfileSheet({ entityId, isOpen, onClose }: Entity
   const entries = data?.entries || []
 
   return (
-    <BottomSheet isOpen={isOpen} onClose={onClose} fullHeight>
-      <div className="flex flex-col space-y-6 pt-2 pb-8">
-        {isLoading ? (
-          <div className="space-y-4 py-8 animate-pulse">
-            <div className="h-8 bg-white/10 rounded w-1/2"></div>
-            <div className="h-4 bg-white/10 rounded w-1/3"></div>
-            <div className="h-24 bg-white/10 rounded"></div>
-          </div>
-        ) : entity ? (
-          <>
-            <header className="flex justify-between items-start">
-              <div>
-                <span className="text-xs font-mono uppercase px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-                  {entity.type}
-                </span>
-                <h2 className="text-3xl font-serif font-bold text-white mt-2">
-                  {entity.name}
-                </h2>
-                {entity.aliases && entity.aliases.length > 0 && (
-                  <p className="text-xs text-white/50 mt-1 font-mono">
-                    Also known as: {entity.aliases.join(', ')}
-                  </p>
-                )}
-              </div>
-              <Link 
-                href={`/browse/${entity.id}`}
-                className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
-              >
-                Full Page &rarr;
-              </Link>
-            </header>
+    <>
+      <BottomSheet isOpen={isOpen} onClose={onClose} fullHeight>
+        <div className="flex flex-col space-y-6 pt-2 pb-8">
+          {isLoading ? (
+            <div className="space-y-4 py-8 animate-pulse">
+              <div className="h-8 bg-white/10 rounded w-1/2"></div>
+              <div className="h-4 bg-white/10 rounded w-1/3"></div>
+              <div className="h-24 bg-white/10 rounded"></div>
+            </div>
+          ) : entity ? (
+            <>
+              <header className="flex flex-wrap justify-between items-start gap-4">
+                <div>
+                  <span className="text-xs font-mono uppercase px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                    {entity.type}
+                  </span>
+                  <h2 className="text-3xl font-serif font-bold text-white mt-2">
+                    {entity.name}
+                  </h2>
+                  {entity.aliases && entity.aliases.length > 0 && (
+                    <p className="text-xs text-white/50 mt-1 font-mono">
+                      Also known as: {entity.aliases.join(', ')}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setIsEditOpen(true)}
+                    className="text-xs px-3.5 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-200 transition-colors flex items-center gap-1.5 font-medium"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                    </svg>
+                    Edit / Delete Node
+                  </button>
+                  <Link 
+                    href={`/browse/${entity.id}`}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                  >
+                    Full Page &rarr;
+                  </Link>
+                </div>
+              </header>
 
             {entity.summary && (
               <section className="bg-white/5 border border-white/10 rounded-xl p-4">
@@ -136,5 +156,22 @@ export default function EntityProfileSheet({ entityId, isOpen, onClose }: Entity
         )}
       </div>
     </BottomSheet>
+
+    {entity && (
+      <EntityEditModal
+        isOpen={isEditOpen}
+        onClose={() => setIsEditOpen(false)}
+        entity={entity}
+        onSuccess={(action) => {
+          if (action === 'deleted') {
+            onClose();
+            window.location.reload();
+          } else {
+            fetchEntity();
+          }
+        }}
+      />
+    )}
+  </>
   )
 }

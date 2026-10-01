@@ -8,6 +8,9 @@ import FloatingAddButton from '@/components/ui/FloatingAddButton'
 import SearchOverlay from './SearchOverlay'
 import OnThisDaySheet from './OnThisDaySheet'
 import EntityProfileSheet from './EntityProfileSheet'
+import LivingMindPanel from './LivingMindPanel'
+import DecisionSimulatorModal from './DecisionSimulatorModal'
+import MorningBriefingModal from './MorningBriefingModal'
 
 interface ExploreViewProps {
   nodeCount: number
@@ -17,8 +20,18 @@ interface ExploreViewProps {
 export default function ExploreView({ nodeCount, edgeCount }: ExploreViewProps) {
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isOnThisDayOpen, setIsOnThisDayOpen] = useState(false)
+  const [isMindOpen, setIsMindOpen] = useState(false)
+  const [isSimulatorOpen, setIsSimulatorOpen] = useState(false)
+  const [isBriefingOpen, setIsBriefingOpen] = useState(false)
   const [profileEntityId, setProfileEntityId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const todayDate = new Date().toISOString().split('T')[0];
+    if (localStorage.getItem('lastBriefingSeen') !== todayDate) {
+      setIsBriefingOpen(true);
+    }
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -37,7 +50,9 @@ export default function ExploreView({ nodeCount, edgeCount }: ExploreViewProps) 
         nodeCount={nodeCount} 
         edgeCount={edgeCount} 
         onSearchClick={() => setIsSearchOpen(true)}
-        onTodayClick={() => setIsOnThisDayOpen(true)}
+        onTodayClick={() => setIsBriefingOpen(true)}
+        onOpenMind={() => setIsMindOpen(true)}
+        onOpenSimulator={() => setIsSimulatorOpen(true)}
       />
       
       <div className="absolute inset-0 z-0">
@@ -65,6 +80,26 @@ export default function ExploreView({ nodeCount, edgeCount }: ExploreViewProps) 
         entityId={profileEntityId}
         isOpen={!!profileEntityId}
         onClose={() => setProfileEntityId(null)}
+      />
+
+      <LivingMindPanel
+        isOpen={isMindOpen}
+        onClose={() => setIsMindOpen(false)}
+        onOpenSimulator={() => {
+          setIsMindOpen(false)
+          setIsSimulatorOpen(true)
+        }}
+      />
+
+      <DecisionSimulatorModal
+        isOpen={isSimulatorOpen}
+        onClose={() => setIsSimulatorOpen(false)}
+      />
+
+      <MorningBriefingModal
+        isOpen={isBriefingOpen}
+        onClose={() => setIsBriefingOpen(false)}
+        onOpenSimulator={() => setIsSimulatorOpen(true)}
       />
 
       <FloatingAddButton />

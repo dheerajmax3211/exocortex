@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { chatJSON } from '@/lib/llm';
 import { z } from 'zod';
@@ -38,6 +39,28 @@ const extractionSchema = z.object({
   questions: z.array(z.string()).default([])
 });
 
+function chunkText(text: string, maxChunkSize = 7000): string[] {
+  if (text.length <= maxChunkSize) return [text];
+  const paragraphs = text.split(/\n+/).filter(p => p.trim().length > 0);
+  if (paragraphs.length === 0) return [text];
+
+  const chunks: string[] = [];
+  let currentChunk = '';
+
+  for (const p of paragraphs) {
+    if (!currentChunk) {
+      currentChunk = p;
+    } else if (currentChunk.length + p.length + 2 <= maxChunkSize) {
+      currentChunk += '\n\n' + p;
+    } else {
+      chunks.push(currentChunk);
+      currentChunk = p;
+    }
+  }
+  if (currentChunk) chunks.push(currentChunk);
+  return chunks;
+}
+
 export async function POST(req: Request) {
   try {
     const supabase = await createClient();
@@ -53,14 +76,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Text is required' }, { status: 400 });
     }
 
-    // 1. Save verbatim raw text to entries with status='draft'
+    const url = new URL(req.url);
+    const isAsync = url.searchParams.get('async') === 'true' || req.headers.get('x-async') === 'true';
+
+    // 1. Save verbatim raw text to entries
     const { data: entry, error: entryError } = await supabase
       .from('entries')
       .insert({
         user_id: user.id,
         raw_text: text,
         source: source || 'typed',
-        status: 'draft'
+        status: isAsync ? 'extracting' : 'draft'
       })
       .select('id')
       .single();
@@ -70,94 +96,333 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Failed to save raw entry' }, { status: 500 });
     }
 
-    // 2. Retrieve candidates: trigram search of existing entities for capitalized or likely names
-    const words = text.match(/\b[A-Za-z0-9_'-]+\b/g) || [];
-    const capitalized = Array.from(new Set(words.filter(w => w.length > 2 && /^[A-Z]/.test(w))));
-    let candidates: any[] = [];
-
-    if (capitalized.length > 0) {
-      for (const name of capitalized.slice(0, 10)) {
-        const { data: matches } = await supabase.rpc('search_entities', {
-          p_query: name,
-          p_user_id: user.id
-        });
-        if (matches && matches.length > 0) {
-          candidates.push(...matches.slice(0, 5));
-        }
-      }
-      // Deduplicate candidates by ID
-      const seen = new Set();
-      candidates = candidates.filter(c => {
-        if (seen.has(c.id)) return false;
-        seen.add(c.id);
-        return true;
-      });
+    const extractionCache = (globalThis as any).__extractionCache || ((globalThis as any).__extractionCache = new Map());
+    if (isAsync) {
+      extractionCache.set(entry.id, { status: 'extracting' });
     }
 
-    const { getOrCreateMeEntity } = await import('@/lib/db');
-    const me = await getOrCreateMeEntity(supabase, user.id);
+    const extractionTask = async () => {
+      try {
+        // We need a fresh client for background tasks if running async, but createClient in nextjs 
+        // uses cookies which might not be accessible in background context after response.
+        // For simplicity we will use the same supabase client, though in Edge/Vercel it might fail.
+        // Actually, we can just use the provided client since it's a standard serverless function.
+        
+        // 2. Comprehensive Graph Taxonomy & Candidate Retrieval
+        const { retrieveHighRecallCandidates } = await import('@/lib/entity-resolution');
+        const { getOrCreateMeEntity } = await import('@/lib/db');
+        const me = await getOrCreateMeEntity(supabase, user.id);
 
-    // Fetch user's known life periods to resolve relative dates like "in 8th grade"
-    const { data: periods } = await supabase
-      .from('entities')
-      .select('id, name, start_date, end_date')
-      .eq('user_id', user.id)
-      .eq('type', 'period')
-      .is('deleted_at', null);
+        // Fetch all active entities (up to 200) to give LLM complete taxonomy visibility
+        const { data: allUserEntities } = await supabase
+          .from('entities')
+          .select('id, name, type, aliases, summary, props')
+          .eq('user_id', user.id)
+          .is('deleted_at', null)
+          .limit(200);
 
-    // Always include the user entity as candidate
-    candidates.unshift({
-      id: me.id,
-      type: 'person',
-      name: me.name,
-      aliases: me.aliases || ['me', 'i', 'myself'],
-      summary: 'The user / author of these memories'
-    });
+        const highRecall = await retrieveHighRecallCandidates(supabase, user.id, text);
+        const candidateMap = new Map<string, any>();
+        for (const e of allUserEntities || []) {
+          candidateMap.set(e.id, e);
+        }
+        for (const h of highRecall) {
+          candidateMap.set(h.id, h);
+        }
 
-    const currentIst = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    const currentDay = new Date().toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+        const candidates: any[] = Array.from(candidateMap.values());
+        const meIdx = candidates.findIndex(c => c.id === me.id);
+        if (meIdx >= 0) candidates.splice(meIdx, 1);
+        candidates.unshift({
+          id: me.id,
+          type: 'person',
+          name: me.name,
+          aliases: me.aliases || ['me', 'i', 'myself'],
+          summary: 'The user / author of these memories'
+        });
 
-    // 3. One LLM call with current time, raw text, candidates, and periods
-    const systemPrompt = `You are the knowledge graph extraction engine for Virtual Brain (a personal memory graph system).
+        const { data: periods } = await supabase
+          .from('entities')
+          .select('id, name, start_date, end_date')
+          .eq('user_id', user.id)
+          .eq('type', 'period')
+          .is('deleted_at', null);
+
+        const currentIst = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+        const currentDay = new Date().toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+
+        const systemPrompt = `You are the knowledge graph extraction and reasoning engine for Virtual Brain (a personal memory and life operating system).
 Current Time in IST: ${currentIst} (${currentDay}).
 
 ROOT USER IDENTITY (CRITICAL):
 - The author/owner of this brain is: "${me.name}" (ID: "${me.id}", Aliases: ${JSON.stringify(me.aliases || [])}).
-- When the memory refers to "I", "me", "my", "myself", or the user states their name/identity (e.g. "I am ${me.name}", "I was born on...", "My name is..."), they are ALWAYS the root user.
+- When the memory refers to "I", "me", "my", "myself", or the user states their name/identity, they are ALWAYS the root user.
 - NEVER create a separate 'person' entity for the user! Use temp_id='me' for the user.
-- If the user states their name, birth date, or biographical details, attach them as facts to temp_id='me' (e.g. key='full_name', value='...', key='birth_date', value='YYYY-MM-DD').
-- Life events relating to the user (e.g. "Birth of...", "Graduated from...") should connect via an edge directly to temp_id='me'.
+- If the user states biographical details, attach them as facts to temp_id='me'.
 
-EXTRACTION RULES:
-1. Dates:
-   - Resolve relative dates ("today", "yesterday", "last Friday", "in 2012", "in 8th grade") against current date and Known Life Periods.
-   - If exact day known: date_precision='day', event_date='YYYY-MM-DD'.
-   - If month/year: date_precision='month'|'year', event_date='YYYY-MM-01'.
-   - If truly undatable: date_precision='unknown', event_date=null.
+1. WORLD KNOWLEDGE, ACRONYM EXPANSION & CANONICALIZATION (CRITICAL):
+- The user writes casually and may use colloquial abbreviations, pop-culture acronyms, equipment model names, or misspellings.
+- YOU MUST USE DEEP WORLD KNOWLEDGE TO EXPAND SLANG, ACRONYMS, AND INFORMAL REFERENCES INTO CANONICAL TITLES:
+  * "himym" -> Canonical Name: "How I Met Your Mother", Type: "show", Aliases: ["himym", "HIMYM"], Summary: "CBS comedy sitcom television series created by Craig Thomas and Carter Bays".
+  * "got" (in media context) -> Canonical Name: "Game of Thrones", Type: "show", Aliases: ["got", "GoT"].
+  * "bb" (in media context) -> Canonical Name: "Breaking Bad", Type: "show", Aliases: ["bb", "Breaking Bad"].
+  * "b99" -> Canonical Name: "Brooklyn Nine-Nine", Type: "show", Aliases: ["b99"].
+  * "z50" or "nikon z50" -> Canonical Name: "Nikon Z50", Type: "item", Aliases: ["z50", "Z50"].
+  * "sk400" or "sk400 kit" -> Canonical Name: "Godox SK400 Studio Strobe", Type: "item", Aliases: ["sk400", "SK400 setup", "sk400 kit"].
+  * "lc500r" or "godox light stick" -> Canonical Name: "Godox LC500R Light Stick", Type: "item", Aliases: ["lc500r", "LC500R"].
+  * "viltrox 24mm f1.8" -> Canonical Name: "Viltrox AF 24mm f/1.8 Lens", Type: "item", Aliases: ["24mm lens", "viltrox 24mm"].
+  * "viltrox 56mm f1.4" -> Canonical Name: "Viltrox AF 56mm f/1.4 Lens", Type: "item", Aliases: ["56mm f/1.4 lens", "viltrox 56mm"].
+  * "viltrox 35mm f1.8" -> Canonical Name: "Viltrox AF 35mm f/1.8 Lens", Type: "item", Aliases: ["35mm lens", "viltrox 35mm"].
+  * "mcoc" -> Canonical Name: "Marvel Contest of Champions", Type: "other", Aliases: ["mcoc", "MCoC"].
+- ALWAYS set the entity 'name' to the full, canonical title.
+- Store the user's exact slang or shorthand in 'aliases' so future mentions immediately match!
 
-2. Modeling Rules:
-   - Events are entities (type='event') with date; participants and place attach via edges (attended_with, at, involves).
-   - Restaurant -> dish is an edge 'served' or 'tried' with props: rating_10 (number /10 if explicitly stated), sentiment ('good'|'bad'|'neutral'), quote (original verbatim words). NEVER invent a number rating. If user says "amazing" or "good" -> sentiment='good', rating_10=null. If "bad" -> sentiment='bad'.
-   - Movies/shows/books: type='movie'|'show'|'book' with edge 'watched'|'read' from Me (temp_id: 'me'), occurred_on, rating_10, sentiment, quote.
-   - Life periods: type='period' (e.g. "8th grade", "MSc") with date ranges. People/schools attach via edges: taught (props.subject), classmate_of, studied_at.
-   - People: type='person'.
+2. ASSIGN TO EXISTING NODES OR UPDATE EXISTING NODES (DEDUPLICATION):
+- Inspect "Candidate Existing Entities in Graph".
+- If the user's text refers to, discusses, or updates an entity that already exists in candidates:
+  YOU MUST SET: match: { existing_id: "<candidate.id>", confidence: 1.0 }
+- Extract all new facts, states, opinions, ratings, or updates (e.g. key='last_watched', value='season 9 finale', key='status', value='battery drained') and attach them to that entity!
+- DO NOT invent duplicate entities for concepts that already exist in the graph!
 
-3. Matching & Ambiguity:
-   - Compare extracted names against Candidate Existing Entities.
-   - Merge into an existing entity ONLY when confident (confidence > 0.85).
-   - If genuinely ambiguous (e.g. "Rahul" mentioned and multiple Rahuls exist in candidates), set match: null and add a clarifying question: "Which Rahul? (e.g. Rahul Sharma or Rahul K)".`;
+3. MULTI-TIER DEEP ONTOLOGY (ARBITRARY DEPTH N >= 3):
+- CRITICAL: DO NOT build flat dandelion star-graphs from 'me'!
+- Organize entities into structured multi-tier trees using intermediate category nodes:
+  * PHOTOGRAPHY MULTI-TIER TREE:
+    'me' -> passionate_about -> "Photography" (Level 1: Domain)
+    "Photography" -> category -> "Camera Equipment" (Level 2: Category)
+    "Camera Equipment" -> camera_body -> "Nikon Z50" (Level 3: Body)
+    "Nikon Z50" -> has_lens -> "Viltrox 56mm f/1.4 Lens", "Viltrox 24mm f/1.8 Lens", "16-50mm kit lens", etc. (Level 4: Optics)
+    "Photography" -> category -> "Lighting Equipment" (Level 2: Category)
+    "Lighting Equipment" -> equipment -> "Godox LC500R", "SK400 setup" (Level 3: Gear)
+    "Photography" -> category -> "Creative Projects" (Level 2: Category)
+    "Creative Projects" -> project -> "Short-film project" (Level 3: Event)
+  * MEDIA & ENTERTAINMENT MULTI-TIER TREE:
+    'me' -> enjoys -> "Media & Entertainment" (Level 1: Domain)
+    "Media & Entertainment" -> category -> "Television & Series" (Level 2: Category)
+    "Television & Series" -> series -> "How I Met Your Mother" (Level 3: Show)
+    "Media & Entertainment" -> category -> "Films & Cinema" (Level 2: Category)
+    "Films & Cinema" -> movie -> "Catch Me If You Can" (Level 3: Movie)
+    "Media & Entertainment" -> category -> "Gaming" (Level 2: Category)
+    "Gaming" -> game -> "Marvel Contest of Champions" (Level 3: Game)
+    "Media & Entertainment" -> category -> "Audiobooks & Literature" (Level 2: Category)
+    "Audiobooks & Literature" -> platform -> "Audible" (Level 3: Platform)
+  * INTERNATIONAL RELOCATION MULTI-TIER TREE:
+    'me' -> aiming_for -> "International Relocation" (Level 1: Domain)
+    "International Relocation" -> category -> "Target Countries" (Level 2: Category)
+    "Target Countries" -> target_country -> "United States", "Canada", "Australia", etc.
+  * DATING & RELATIONSHIPS MULTI-TIER TREE:
+    'me' -> explores -> "Dating & Relationships" (Level 1: Domain)
+    "Dating & Relationships" -> category -> "Dating Platforms" (Level 2: Category)
+    "Dating Platforms" -> platform -> "Tinder", "Bumble", "Hinge", "Aisle", "Nymph"
+    "Dating & Relationships" -> category -> "Personal Connections" (Level 2: Category)
+    "Personal Connections" -> connection -> "Cindy"
+  * FOOD & DIETARY MULTI-TIER TREE:
+    'me' -> has_preference -> "Food Preferences" (Level 1: Domain)
+    "Food Preferences" -> category -> "Favorite Dishes" (Level 2: Category)
+    "Favorite Dishes" -> favorite_dish -> "Dosa", "Idli", "Peanut chutney"
+    "Food Preferences" -> category -> "Avoided Foods" (Level 2: Category)
+    "Avoided Foods" -> avoids -> "Bitter gourd", "Brinjal", "Leafy greens", "Tomato"
 
-    const extraction = await chatJSON({
-      system: systemPrompt,
-      prompt: `Raw Memory Entry:\n"${text}"\n\nCandidate Existing Entities in Graph:\n${JSON.stringify(candidates.map(c => ({ id: c.id, type: c.type, name: c.name, aliases: c.aliases, summary: c.summary })), null, 2)}\n\nKnown Life Periods:\n${JSON.stringify(periods || [], null, 2)}`,
-      schema: extractionSchema
-    });
+4. STRICT ANTI-BYPASS RULE (ZERO SPOKES FROM 'ME' TO LEAF NODES):
+- NEVER connect root user 'me' directly to a leaf node (e.g. an app, tool, lens, light, show, movie, food dish, country).
+- If the user uses, tries, buys, watches, eats, or likes a leaf entity:
+  * The leaf entity connects to its Category (e.g. "Dating Platforms" -> platform -> "Nymph", "Television & Series" -> series -> "How I Met Your Mother").
+  * The user's action and status MUST be recorded in FACTS on that leaf entity (e.g. on Nymph: key='status', value='trying', key='started_using', value='2026-01-10').
+  * DO NOT add an edge from 'me' to that leaf entity!
+- The ONLY entities 'me' connects directly to are:
+  1. Top-level Domain Hubs ('Photography', 'Media & Entertainment', 'Dating & Relationships', 'International Relocation', 'Food Preferences', etc.)
+  2. First-degree personal anchors: Parents ('family_of'), Primary Employer ('works_at'), Current City ('lives_in'), or major autobiographical life events ('Ooty trip').
 
-    return NextResponse.json({
-      entry_id: entry.id,
-      extraction,
-      candidates
-    });
+5. Dates & Facts:
+- Resolve relative dates against current date and Known Life Periods.
+- Extract ALL granular facts (specs, numbers, dates, sentiments, opinions, quotes) into the facts array.`;
+
+        const chunks = chunkText(text, 7000);
+        const candidateContext = JSON.stringify(candidates.map(c => ({ id: c.id, type: c.type, name: c.name, aliases: c.aliases, summary: c.summary })), null, 2);
+        const periodsContext = JSON.stringify(periods || [], null, 2);
+
+        const extractionPromises = chunks.map(chunk => chatJSON({
+          system: systemPrompt,
+          prompt: `Raw Memory Entry (Chunk):\n"${chunk}"\n\nCandidate Existing Entities in Graph:\n${candidateContext}\n\nKnown Life Periods:\n${periodsContext}`,
+          schema: extractionSchema
+        }));
+
+        const allExtractions = await Promise.all(extractionPromises);
+
+        const mergedEntities = new Map<string, any>();
+        const tempIdMapping = new Map<string, string>();
+        const mergedEdges: any[] = [];
+        const mergedFacts: any[] = [];
+        const mergedQuestions = new Set<string>();
+
+        let mergedEventDate: string | null = null;
+        let mergedDateEnd: string | null = null;
+        let mergedDatePrecision: 'day' | 'month' | 'year' | 'period' | 'unknown' = 'unknown';
+        let mergedEvent: any = null;
+
+        for (const ex of allExtractions) {
+          if (!mergedEventDate && ex.event_date) mergedEventDate = ex.event_date;
+          if (!mergedDateEnd && ex.date_end) mergedDateEnd = ex.date_end;
+          if (mergedDatePrecision === 'unknown' && ex.date_precision !== 'unknown') {
+            mergedDatePrecision = ex.date_precision;
+          }
+          if (!mergedEvent && ex.event) mergedEvent = ex.event;
+
+          for (const ent of ex.entities) {
+            if (ent.temp_id === 'me') {
+              if (!mergedEntities.has('me')) {
+                mergedEntities.set('me', ent);
+              } else {
+                const existing = mergedEntities.get('me');
+                existing.props = { ...existing.props, ...ent.props };
+                if (ent.summary && !existing.summary) existing.summary = ent.summary;
+              }
+              tempIdMapping.set('me', 'me');
+              continue;
+            }
+
+            const normName = ent.name.toLowerCase().trim();
+            const entAliases = (ent.aliases || []).map((a: string) => a.toLowerCase().trim());
+
+            let matchedKey: string | null = null;
+            for (const [key, existing] of mergedEntities.entries()) {
+              if (key === 'me') continue;
+              
+              const existingAliases = (existing.aliases || []).map((a: string) => a.toLowerCase().trim());
+              if (
+                key === normName ||
+                existingAliases.includes(normName) ||
+                entAliases.includes(key) ||
+                entAliases.some((a: string) => existingAliases.includes(a))
+              ) {
+                matchedKey = key;
+                break;
+              }
+            }
+
+            if (matchedKey) {
+              const existing = mergedEntities.get(matchedKey);
+              tempIdMapping.set(ent.temp_id, existing.temp_id);
+              existing.aliases = Array.from(new Set([...(existing.aliases || []), ...(ent.aliases || [])]));
+              existing.props = { ...existing.props, ...ent.props };
+              if (ent.summary && !existing.summary) existing.summary = ent.summary;
+              if (ent.match?.existing_id && !existing.match?.existing_id) existing.match = ent.match;
+            } else {
+              mergedEntities.set(normName, ent);
+              tempIdMapping.set(ent.temp_id, ent.temp_id);
+            }
+          }
+        }
+
+        for (const ex of allExtractions) {
+          for (const edge of ex.edges) {
+            mergedEdges.push({
+              ...edge,
+              src_temp_id: tempIdMapping.get(edge.src_temp_id) || edge.src_temp_id,
+              dst_temp_id: tempIdMapping.get(edge.dst_temp_id) || edge.dst_temp_id,
+            });
+          }
+          for (const fact of ex.facts) {
+            mergedFacts.push({
+              ...fact,
+              entity_temp_id: tempIdMapping.get(fact.entity_temp_id) || fact.entity_temp_id,
+            });
+          }
+          for (const q of ex.questions) {
+            mergedQuestions.add(q);
+          }
+        }
+
+        const uniqueEdges = [];
+        const edgeSeen = new Set();
+        for (const e of mergedEdges) {
+          const key = `${e.src_temp_id}-${e.dst_temp_id}-${e.relation}`;
+          if (!edgeSeen.has(key)) {
+            edgeSeen.add(key);
+            uniqueEdges.push(e);
+          }
+        }
+
+        const uniqueFacts = [];
+        const factSeen = new Set();
+        for (const f of mergedFacts) {
+          const key = `${f.entity_temp_id}-${f.key}-${f.value}`;
+          if (!factSeen.has(key)) {
+            factSeen.add(key);
+            uniqueFacts.push(f);
+          }
+        }
+
+        const { restructureHierarchicalExtraction } = await import('@/lib/graph-hierarchy');
+        const hierarchicalResult = restructureHierarchicalExtraction(
+          Array.from(mergedEntities.values()),
+          uniqueEdges,
+          uniqueFacts,
+          candidates
+        );
+
+        const finalExtraction = {
+          event_date: mergedEventDate,
+          date_end: mergedDateEnd,
+          date_precision: mergedDatePrecision,
+          entities: hierarchicalResult.entities,
+          edges: hierarchicalResult.edges,
+          facts: hierarchicalResult.facts,
+          event: mergedEvent,
+          questions: Array.from(mergedQuestions)
+        };
+
+        const newStatus = finalExtraction.questions.length > 0 ? 'draft' : 'ready';
+
+        if (isAsync) {
+          // In async mode, update the entry status and cache the extraction
+          await supabase.from('entries').update({
+            status: newStatus
+          }).eq('id', entry.id);
+
+          extractionCache.set(entry.id, {
+            status: newStatus,
+            extraction: finalExtraction,
+            candidates
+          });
+        }
+
+        return { finalExtraction, candidates, newStatus };
+      } catch (err) {
+        console.error('Background extraction error:', err);
+        if (isAsync) {
+          await supabase.from('entries').update({
+            status: 'draft'
+          }).eq('id', entry.id);
+
+          extractionCache.set(entry.id, {
+            status: 'error',
+            error: String(err)
+          });
+        }
+        throw err;
+      }
+    };
+
+    if (isAsync) {
+      // Fire and forget
+      after(async () => {
+        await extractionTask().catch(e => console.error('Unhandled async extraction error:', e));
+      });
+      return NextResponse.json({
+        entry_id: entry.id,
+        status: 'extracting',
+        message: 'Memory extraction underway in neural background'
+      }, { status: 202 });
+    } else {
+      // Sync execution
+      const { finalExtraction, candidates } = await extractionTask();
+      return NextResponse.json({
+        entry_id: entry.id,
+        extraction: finalExtraction,
+        candidates
+      });
+    }
   } catch (error: any) {
     console.error('Ingest error:', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });

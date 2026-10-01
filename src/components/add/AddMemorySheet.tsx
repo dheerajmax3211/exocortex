@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import BottomSheet from '../ui/BottomSheet'
 import ReviewSheet from './ReviewSheet'
+import { AudioRecorder } from './AudioRecorder'
 
 interface AddMemorySheetProps {
   isOpen: boolean
@@ -15,6 +16,8 @@ export default function AddMemorySheet({ isOpen, onClose }: AddMemorySheetProps)
   const [isProcessing, setIsProcessing] = useState(false)
   const [showReview, setShowReview] = useState(false)
   const [extractedData, setExtractedData] = useState<any>(null)
+  const [isPolling, setIsPolling] = useState(false)
+  const [pollStep, setPollStep] = useState(0)
   
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -62,7 +65,7 @@ export default function AddMemorySheet({ isOpen, onClose }: AddMemorySheetProps)
     setIsProcessing(true)
 
     try {
-      const res = await fetch('/api/ingest', {
+      const res = await fetch('/api/ingest?async=true', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
@@ -72,7 +75,34 @@ export default function AddMemorySheet({ isOpen, onClose }: AddMemorySheetProps)
         throw new Error('Failed to ingest memory')
       }
       
-      const data = await res.json()
+      let data = await res.json()
+
+      if (res.status === 202) {
+        setIsPolling(true)
+        let step = 0
+        while (true) {
+          step++
+          if (step > 3) step = 3
+          setPollStep(step)
+          await new Promise(r => setTimeout(r, 1000))
+          
+          const statusRes = await fetch(`/api/ingest/status/${data.entry_id}`)
+          if (!statusRes.ok) throw new Error('Failed to check status')
+          const statusData = await statusRes.json()
+          
+          if (statusData.status === 'ready' || statusData.status === 'draft') {
+            data = {
+              entry_id: data.entry_id,
+              extraction: statusData.extraction || statusData.props?.extraction,
+              candidates: statusData.candidates || statusData.props?.candidates
+            }
+            break
+          } else if (statusData.status === 'error') {
+            throw new Error(statusData.error || 'Extraction failed')
+          }
+        }
+        setIsPolling(false)
+      }
 
       const isAutoSave = typeof window !== 'undefined' && localStorage.getItem('autoSave') === 'true'
       const extraction = data?.extraction
@@ -110,6 +140,31 @@ export default function AddMemorySheet({ isOpen, onClose }: AddMemorySheetProps)
     }
   }
 
+  if (isPolling) {
+    return (
+      <BottomSheet isOpen={isOpen} onClose={onClose}>
+        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center pb-20">
+          <div className="text-4xl animate-pulse">🧠</div>
+          <h3 className="text-xl font-medium text-[var(--foreground)]">Neural Graph Extraction in progress...</h3>
+          <div className="flex flex-col items-start space-y-3 text-sm text-[var(--muted)] w-64 mx-auto">
+            <div className={`flex items-center space-x-3 transition-opacity duration-300 ${pollStep >= 1 ? 'text-[var(--foreground)] opacity-100' : 'opacity-40'}`}>
+              <span className="text-lg">{pollStep >= 2 ? '✓' : '•'}</span>
+              <span>Chunking text</span>
+            </div>
+            <div className={`flex items-center space-x-3 transition-opacity duration-300 ${pollStep >= 2 ? 'text-[var(--foreground)] opacity-100' : 'opacity-40'}`}>
+              <span className="text-lg">{pollStep >= 3 ? '✓' : '•'}</span>
+              <span>Extracting semantic entities</span>
+            </div>
+            <div className={`flex items-center space-x-3 transition-opacity duration-300 ${pollStep >= 3 ? 'text-[var(--foreground)] opacity-100' : 'opacity-40'}`}>
+              <span className="text-lg text-[var(--accent)] animate-pulse">⏳</span>
+              <span>Resolving candidates</span>
+            </div>
+          </div>
+        </div>
+      </BottomSheet>
+    )
+  }
+
   if (showReview) {
     return (
       <ReviewSheet 
@@ -134,20 +189,10 @@ export default function AddMemorySheet({ isOpen, onClose }: AddMemorySheetProps)
         />
 
         <div className="flex items-center justify-between mt-auto pt-4 border-t border-[var(--border)]">
-          <button
-            type="button"
-            onClick={toggleMic}
-            className={`p-3 rounded-full transition-colors ${isListening ? 'bg-red-500/20 text-red-500' : 'bg-[var(--border)] text-[var(--foreground)]'}`}
-            aria-label="Toggle Microphone"
-            disabled={isProcessing}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" y1="19" x2="12" y2="23"/>
-              <line x1="8" y1="23" x2="16" y2="23"/>
-            </svg>
-          </button>
+          <AudioRecorder
+            onTranscription={(transcript) => setText(prev => prev ? `${prev} ${transcript}` : transcript)}
+            isProcessing={isProcessing}
+          />
 
           <button
             onClick={handleSubmit}

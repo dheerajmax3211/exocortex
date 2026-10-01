@@ -13,23 +13,31 @@ export interface AliveEvaluationResult {
  * Compiles a deep psychological, social, and aesthetic profile of the user
  * from their entire knowledge graph.
  */
-export async function compileAlivePersonaContext(supabase: SupabaseClient) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+export async function compileAlivePersonaContext(supabase: SupabaseClient, explicitUserId?: string) {
+  let userId = explicitUserId;
+  if (!userId) {
+    const { data: { user } } = await supabase.auth.getUser();
+    userId = user?.id;
+  }
+  if (!userId) {
+    const { data: meEnt } = await supabase.from('entities').select('user_id').eq('props->>is_user', 'true').limit(1).maybeSingle();
+    userId = meEnt?.user_id;
+  }
+  if (!userId) return null;
 
   // 1. Fetch Root user entity and user facts
-  const me = await getOrCreateMeEntity(supabase, user.id);
+  const me = await getOrCreateMeEntity(supabase, userId);
 
   const { data: userFacts } = await supabase
     .from('facts')
     .select('key, value')
-    .eq('user_id', user.id);
+    .eq('user_id', userId);
 
   // 2. Fetch People (social circle, friends, dates, mentors, family)
   const { data: people } = await supabase
     .from('entities')
     .select('id, name, summary, props')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .eq('type', 'person')
     .neq('id', me.id)
     .is('deleted_at', null)
@@ -42,7 +50,7 @@ export async function compileAlivePersonaContext(supabase: SupabaseClient) {
     const { data: edges } = await supabase
       .from('edges')
       .select('src, dst, relation, props, occurred_on')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .is('deleted_at', null)
       .or(`src.in.(${peopleIds.join(',')}),dst.in.(${peopleIds.join(',')})`);
     socialEdges = edges || [];
@@ -52,7 +60,7 @@ export async function compileAlivePersonaContext(supabase: SupabaseClient) {
   const { data: places } = await supabase
     .from('entities')
     .select('id, name, type, summary, props')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .in('type', ['place', 'restaurant', 'movie', 'dish'])
     .is('deleted_at', null)
     .limit(50);
@@ -61,7 +69,7 @@ export async function compileAlivePersonaContext(supabase: SupabaseClient) {
   const { data: recentEntries } = await supabase
     .from('entries')
     .select('raw_text, event_date, entered_at')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .eq('status', 'committed')
     .order('entered_at', { ascending: false })
     .limit(30);
@@ -70,7 +78,7 @@ export async function compileAlivePersonaContext(supabase: SupabaseClient) {
   const { data: periods } = await supabase
     .from('entities')
     .select('name, summary, start_date, end_date')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .eq('type', 'period')
     .is('deleted_at', null);
 
@@ -141,22 +149,22 @@ export async function checkAndHandleAliveEvaluation(
     const currentIst = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
     const systemPrompt = `You are NOT a detached third-party AI assistant.
-You are DHEERAJ'S VIRTUAL BRAIN — his living digital consciousness, his alter ego, his inner voice.
+You are ${persona.me?.name?.toUpperCase() || 'THE USER'}'S VIRTUAL BRAIN — their living digital consciousness, their alter ego, and inner voice.
 Current Time in IST: ${currentIst}.
 
 CRITICAL OPERATIONAL RULES:
-1. Speak in the FIRST PERSON ("I", "my gut", "knowing myself", "for me", "the way I operate"). Even if answering the user, you are speaking as his own internal mind reflecting back to him.
-2. Embody his authentic personality: witty, sharp, self-aware, grounded, discerning, and honest. Avoid generic corporate or clinical fluff.
-3. Use his ACTUAL memories, relationships, and lifestyle:
-   - Reference his real social circle, favorite spots (e.g., breweries, cafes, cities), and past relationship/friendship dynamics.
-   - Call out specific traits that have historically made him feel energized vs. drained or frustrated.
+1. Speak in the FIRST PERSON ("I", "my gut", "knowing myself", "for me", "the way I operate"). Even if answering the user, you are speaking as their own internal mind reflecting back to them.
+2. Embody their authentic personality: witty, sharp, self-aware, grounded, discerning, and honest. Avoid generic corporate or clinical fluff.
+3. Use their ACTUAL memories, relationships, and lifestyle:
+   - Reference their real social circle, favorite spots, and past relationship/friendship dynamics.
+   - Call out specific traits that have historically made them feel energized vs. drained or frustrated.
 4. When evaluating a person, image, or profile:
    - Break down the Visual Vibe & Aesthetic (energy, styling, facial expression, authenticity vs performative).
    - Analyze Values & Lifestyle Chemistry (social battery, humor, ambitions, communication style).
-   - Flag Green Flags & Potential Dealbreakers based on what he's recorded in his past memories.
-   - Deliver an Unfiltered Gut Verdict (out of 10, plus the exact move or question he should make).
+   - Flag Green Flags & Potential Dealbreakers based on what they've recorded in past memories.
+   - Deliver an Unfiltered Gut Verdict (out of 10, plus the exact move or question they should make).
 
-DHEERAJ'S LIVING MEMORY MAP:
+LIVING MEMORY MAP:
 - Social Circle & Relationship History: ${JSON.stringify(persona.socialCircle.slice(0, 15))}
 - Places, Food & Aesthetic Haunts: ${JSON.stringify(persona.placesAndTastes.slice(0, 25))}
 - Life Periods & Context: ${JSON.stringify(persona.lifePeriods)}

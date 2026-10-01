@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getOrCreateMeEntity } from '@/lib/db';
+import { analyzeKnowledgeGraphHybrid } from '@/lib/graph-analytics';
+import { isDomainHubName, isCategoryName } from '@/lib/graph-hierarchy';
 
 export async function GET(req: Request) {
   try {
@@ -11,33 +13,16 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Ensure root "Me" entity and layout coordinate exist
     const me = await getOrCreateMeEntity(supabase, user.id);
-    const { data: meLayout } = await supabase
-      .from('graph_layout')
-      .select('entity_id')
-      .eq('entity_id', me.id)
-      .maybeSingle();
 
-    if (!meLayout) {
-      await supabase.from('graph_layout').insert({
-        entity_id: me.id,
-        user_id: user.id,
-        x: 0,
-        y: 0
-      });
-    }
+    // Fetch ALL entities
+    const { data: entities, error: entError } = await supabase
+      .from('entities')
+      .select('id, name, type, summary, props')
+      .eq('user_id', user.id)
+      .is('deleted_at', null);
 
-    // Fetch graph layouts (nodes)
-    const { data: layouts, error: nodesError } = await supabase
-      .from('graph_layout')
-      .select(`
-        x, y,
-        entity:entities ( id, name, type )
-      `)
-      .eq('user_id', user.id);
-
-    if (nodesError) throw nodesError;
+    if (entError) throw entError;
 
     // Fetch edges
     const { data: edges, error: edgesError } = await supabase
@@ -48,69 +33,98 @@ export async function GET(req: Request) {
 
     if (edgesError) throw edgesError;
 
-    const formattedNodes = (layouts || [])
-      .filter((n: any) => n.entity)
-      .map((n: any) => ({
-        id: n.entity.id,
-        x: n.x,
-        y: n.y,
-        label: n.entity.name,
-        type: n.entity.type
-      }));
+    // Run Graph Data Science Analytics: PageRank, Degree Centrality, and Bridge Detection
+    const analyticsResult = await analyzeKnowledgeGraphHybrid(
+      supabase,
+      user.id,
+      (entities || []).map(e => ({ id: e.id, name: e.name, type: e.type })),
+      (edges || []).map(e => ({ src: e.src, dst: e.dst, relation: e.relation }))
+    );
 
-    const formattedEdges = (edges || []).map((e: any) => ({
+    const activeTensions = me.props?.mind_state?.active_tensions || me.props?.mind_state?.tensions || me.props?.active_tensions || [];
+
+    // Format nodes for react-force-graph-3d
+    const nodes = (entities || []).map((e: any) => {
+      const isUser = e.id === me.id;
+      const deg = analyticsResult.degreeCentrality.get(e.id) || 0;
+      const normalizedScore = analyticsResult.normalizedScores.get(e.id) || 2.0;
+      const isBridge = analyticsResult.bridgeNodes.has(e.id);
+
+      let isTension = false;
+      let tensionSeverity = undefined;
+      let tensionHeadline = undefined;
+
+      for (const t of activeTensions) {
+        const related = t.related_entities || [];
+        const keywords = t.keywords || [];
+        
+        const matchesEntity = related.some((r: any) => 
+          (typeof r === 'string' && (r.toLowerCase() === e.name.toLowerCase() || r === e.id)) ||
+          (r.id && r.id === e.id) ||
+          (r.name && r.name.toLowerCase() === e.name.toLowerCase())
+        );
+        
+        const matchesKeyword = keywords.some((k: string) => 
+          typeof k === 'string' && e.name.toLowerCase().includes(k.toLowerCase())
+        );
+
+        if (matchesEntity || matchesKeyword) {
+          isTension = true;
+          tensionSeverity = t.severity;
+          tensionHeadline = t.headline;
+          break;
+        }
+      }
+
+      const isDomainHub = Boolean(
+        e.props?.is_domain_hub || isDomainHubName(e.name)
+      );
+
+      const isCategory = Boolean(
+        e.props?.is_category || isCategoryName(e.name)
+      );
+
+      return {
+        id: e.id,
+        name: e.name,
+        type: e.type,
+        val: isUser ? 10 : (isDomainHub ? 7.0 : (isCategory ? 5.0 : normalizedScore)), // Hierarchical visual scale
+        connectionCount: deg,
+        isBridge,
+        isUser,
+        isDomainHub,
+        isCategory,
+        props: e.props || {},
+        isTension,
+        tensionSeverity,
+        tensionHeadline,
+        // Pin root user entity exactly at origin (0, 0, 0)
+        ...(isUser ? { fx: 0, fy: 0, fz: 0 } : {}),
+      };
+    });
+
+    // Format links
+    const links = (edges || []).map((e: any) => ({
       source: e.src,
       target: e.dst,
-      relation: e.relation
+      relation: e.relation,
     }));
 
-    // Fetch cognitive clusters / themes
+    // Fetch cognitive clusters
     const { data: clusters } = await supabase
       .from('clusters')
       .select('id, name, entity_ids')
       .eq('user_id', user.id);
 
-    // Compute centroid and radius for each cluster from member layout nodes
-    const nodeCoords = new Map<string, { x: number; y: number }>();
-    (layouts || []).forEach((l: any) => {
-      if (l.entity?.id) nodeCoords.set(l.entity.id, { x: l.x, y: l.y });
-    });
-
-    const clusterHalos = (clusters || []).map((c: any) => {
-      const validPoints = (c.entity_ids || [])
-        .map((id: string) => nodeCoords.get(id))
-        .filter(Boolean);
-
-      if (validPoints.length === 0) return null;
-
-      const avgX = validPoints.reduce((sum: number, p: any) => sum + p.x, 0) / validPoints.length;
-      const avgY = validPoints.reduce((sum: number, p: any) => sum + p.y, 0) / validPoints.length;
-      
-      let maxDist = 80;
-      for (const p of validPoints) {
-        const d = Math.hypot(p.x - avgX, p.y - avgY);
-        if (d > maxDist) maxDist = d;
-      }
-
-      return {
-        id: c.id,
-        name: c.name,
-        x: avgX,
-        y: avgY,
-        radius: Math.min(450, maxDist + 70)
-      };
-    }).filter(Boolean);
-
     return NextResponse.json({
-      nodes: formattedNodes,
-      edges: formattedEdges,
-      clusters: clusterHalos,
-      nodeCount: formattedNodes.length,
-      edgeCount: formattedEdges.length
+      nodes,
+      links,
+      clusters: clusters || [],
+      nodeCount: nodes.length,
+      edgeCount: links.length,
     });
   } catch (error: any) {
     console.error('Graph API error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-

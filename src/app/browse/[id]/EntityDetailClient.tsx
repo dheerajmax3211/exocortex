@@ -170,6 +170,13 @@ export default function EntityDetailClient({ entity, facts, edges, entries }: En
         isOpen={isEditOpen}
         onClose={() => setIsEditOpen(false)}
         entity={entity}
+        onSuccess={(action) => {
+          if (action === 'deleted') {
+            window.location.href = '/browse'
+          } else {
+            window.location.reload()
+          }
+        }}
       />
 
       {/* Merge Modal */}

@@ -75,22 +75,52 @@ export async function POST(req: Request) {
 
     // 3. Ultra-fast Single-Shot Hybrid GraphRAG pre-fetch (<50ms)
     const { executeHybridGraphRAG, formatGraphRAGContext } = await import('@/lib/graphrag');
-    const ragResult = await executeHybridGraphRAG(latestUserMessage, supabase);
+    const { getOrRefreshMindState } = await import('@/lib/subconscious-engine');
+
+    const [ragResult, mindState] = await Promise.all([
+      executeHybridGraphRAG(latestUserMessage, supabase),
+      getOrRefreshMindState(supabase, user.id).catch(() => null)
+    ]);
+
     const ragContext = formatGraphRAGContext(ragResult);
 
-    const systemPrompt = `You are a memory retrieval assistant for Virtual Brain.
+    const activeTensionsSummary = mindState?.tensions?.length 
+      ? `ACTIVE COGNITIVE TENSIONS:\n${mindState.tensions.map(t => `- [${t.severity.toUpperCase()}] ${t.headline}: ${t.actionable_directive}`).join('\n')}`
+      : '';
+
+    const vectorsSummary = mindState?.vectors
+      ? `CURRENT LIFE VECTORS (0-100): Career=${mindState.vectors.career_score}%, Finance=${mindState.vectors.finance_score}%, Fitness=${mindState.vectors.fitness_score}%, Execution=${mindState.vectors.execution_score}%, Mindset=${mindState.vectors.mindset_score}%`
+      : '';
+
+    const { getOrCreateMeEntity } = await import('@/lib/db');
+    const me = await getOrCreateMeEntity(supabase, user.id);
+    const userName = me?.name || 'User';
+
+    const systemPrompt = `You are ${userName.toUpperCase()}'S VIRTUAL BRAIN — their living digital memory graph and inner voice.
 Current Date/Time (IST): ${currentIst} (${currentDay}).
-${toneInstruction}
 
-${ragContext ? `HYBRID GRAPHRAG RETRIEVED MEMORY SUBGRAPH (<${ragResult.latencyMs}ms):\n${ragContext}\n` : ''}
+OPERATIONAL IDENTITY & TONE:
+1. ${toneInstruction}
+2. Be direct, clear, grounded, and concise. Never sound like a generic clinical chatbot or a preachy amateur therapist.
+3. STRICT ACCURACY & ZERO PSYCHOANALYSIS:
+   - Ground your answer strictly in the facts and relationships provided in the retrieved memory subgraph below.
+   - NEVER give unsolicited psychological analyses, preachiness, or unsolicited lectures about personal motives.
+   - NEVER inject unrelated personal stats (such as body weight, fitness goals, salary, or debts) into queries about travel, gear, movies, social plans, or other distinct topics.
+   - If the specific "why", motivation, or detail requested is NOT in your memory graph:
+     * State clearly what IS known from the records.
+     * State honestly: "...but I haven't recorded the specific reason or motivation behind it yet."
+     * Do NOT invent or speculate motives (e.g. do not guess "maybe it's a guilt trip").
+     * Offer a quick follow-up: "If you'd like, let me know the reason and I'll save it to your memory graph."
+4. If asked explicitly for strategic advice, a gut check, or a decision review, give a sharp, grounded perspective based on their stated priorities and active vectors.
 
-Answer strictly based on retrieved memory context and tool results.
-Cite sources inline as [entry date] (e.g. [14 Mar 2024] or [2024-03-14]).
-For list questions, return complete lists (paginate through tools rather than truncating).
-For questions asking whether the user would like or enjoy a movie, food, or item, synthesize a grounded verdict comparing the candidate against their past memories.
-For ambiguity, ask one short clarifying question.
-If data is missing or not found in the graph, say clearly: "This hasn't been recorded yet." and suggest what the user could add.
-Never hallucinate or invent facts.`;
+${vectorsSummary ? `\n${vectorsSummary}\n` : ''}
+${activeTensionsSummary ? `\n${activeTensionsSummary}\n` : ''}
+${ragContext ? `\nHYBRID GRAPHRAG RETRIEVED MEMORY SUBGRAPH (<${ragResult.latencyMs}ms):\n${ragContext}\n` : ''}
+
+RULES OF ENGAGEMENT:
+- Answer directly and concisely based on retrieved memories, active life vectors, and facts.
+- Cite sources inline when available as [date] (e.g. [2026-10-02]).
+- Never hallucinate facts not present in the graph.`;
 
     const result = await chatWithTools({
       system: systemPrompt,

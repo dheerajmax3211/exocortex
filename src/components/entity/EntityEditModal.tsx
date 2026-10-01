@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react'
 interface EntityEditModalProps {
   isOpen: boolean
   onClose: () => void
+  onSuccess?: (action: 'saved' | 'deleted') => void
   entity: {
     id: string
     name: string
@@ -14,7 +15,7 @@ interface EntityEditModalProps {
   }
 }
 
-export default function EntityEditModal({ isOpen, onClose, entity }: EntityEditModalProps) {
+export default function EntityEditModal({ isOpen, onClose, onSuccess, entity }: EntityEditModalProps) {
   const [name, setName] = useState('')
   const [aliases, setAliases] = useState('')
   const [summary, setSummary] = useState('')
@@ -38,7 +39,7 @@ export default function EntityEditModal({ isOpen, onClose, entity }: EntityEditM
   const handleSave = async () => {
     setIsSaving(true)
     try {
-      await fetch(`/api/entities/${entity.id}`, {
+      const res = await fetch(`/api/entities/${entity.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -48,9 +49,12 @@ export default function EntityEditModal({ isOpen, onClose, entity }: EntityEditM
           type
         })
       })
+      if (!res.ok) throw new Error('Failed to update entity')
+      onSuccess?.('saved')
       onClose()
     } catch (err) {
       console.error(err)
+      alert('Could not update entity')
     } finally {
       setIsSaving(false)
     }
@@ -59,12 +63,15 @@ export default function EntityEditModal({ isOpen, onClose, entity }: EntityEditM
   const handleDelete = async () => {
     setIsDeleting(true)
     try {
-      await fetch(`/api/entities/${entity.id}`, {
+      const res = await fetch(`/api/entities/${entity.id}`, {
         method: 'DELETE'
       })
+      if (!res.ok) throw new Error('Failed to delete entity')
+      onSuccess?.('deleted')
       onClose()
     } catch (err) {
       console.error(err)
+      alert('Could not delete entity')
     } finally {
       setIsDeleting(false)
     }

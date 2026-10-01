@@ -184,7 +184,7 @@ export default function ReviewSheet({ isOpen, onClose, data, onEdit }: ReviewShe
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {extraction.facts.map((fact: any, i: number) => {
-                const entName = extraction.entities?.find((e: any) => e.temp_id === fact.entity_temp_id)?.name || 'Dheeraj Srinivasa'
+                const entName = extraction.entities?.find((e: any) => e.temp_id === fact.entity_temp_id)?.name || 'You'
                 return (
                   <div key={i} className="text-xs p-3 rounded-xl bg-white/5 border border-white/10 flex flex-col gap-1">
                     <div className="flex items-center justify-between text-white/50 font-mono text-[10px]">

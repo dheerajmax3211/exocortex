@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { GraphNode } from '@/lib/graph/renderer';
 
 interface NodeCardProps {
-  node: GraphNode;
+  node: GraphNode & { isTension?: boolean; tensionSeverity?: string; tensionHeadline?: string };
   x: number;
   y: number;
   onClose?: () => void;
@@ -116,6 +116,13 @@ export default function NodeCard({ node, x, y, onClose, onViewProfile }: NodeCar
       <h3 className="text-lg font-serif font-bold text-white mb-2 leading-tight">
         {node.label}
       </h3>
+
+      {node.isTension && (
+        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg p-2 mb-3 text-xs flex items-start gap-1.5 font-medium">
+          <span>⚠️</span>
+          <span>Active Life Tension: {node.tensionHeadline || 'Requires attention'}</span>
+        </div>
+      )}
       
       <div className="bg-white/5 rounded-xl p-3 border border-white/5 mb-3">
         {isLoading ? (

@@ -71,6 +71,29 @@ export default function SettingsPage() {
       setIsExporting(false)
     }
   }
+
+  const handleObsidianExport = async () => {
+    setIsExporting(true)
+    try {
+      const res = await fetch('/api/export?format=obsidian')
+      if (res.ok) {
+        const blob = await res.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `VirtualBrain-Obsidian-Vault.zip`
+        a.click()
+        window.URL.revokeObjectURL(url)
+      } else {
+        alert('Export failed')
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Error exporting vault')
+    } finally {
+      setIsExporting(false)
+    }
+  }
   
   const handleReprocess = async () => {
     setIsReprocessing(true)
@@ -239,6 +262,28 @@ export default function SettingsPage() {
             </h2>
             
             <div className="space-y-3">
+              <button 
+                onClick={handleObsidianExport} 
+                disabled={isExporting}
+                className="w-full flex items-center justify-between p-4 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 transition-colors"
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400">
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-white font-medium text-sm text-left flex items-center gap-2">
+                      Export as Obsidian Vault (.zip)
+                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 font-mono">NEW</span>
+                    </div>
+                    <div className="text-xs text-white/50 text-left mt-0.5">Interconnected markdown files with frontmatter</div>
+                  </div>
+                </div>
+                <span className="text-xs font-mono text-purple-400">{isExporting ? 'Exporting...' : 'Download'}</span>
+              </button>
+
               <button 
                 onClick={handleExport} 
                 disabled={isExporting}

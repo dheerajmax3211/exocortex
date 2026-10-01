@@ -43,13 +43,32 @@ export async function executeHybridGraphRAG(
       return await executeFallbackSearch(query, supabase, startTime);
     }
 
+    const seeds = data.seeds || [];
+    const seedIds = seeds.map((s: any) => s.id);
+    let facts = data.facts || [];
+
+    // Prioritize seed facts so they are NEVER crowded out by neighbor/root entity facts
+    if (seedIds.length > 0) {
+      const { data: seedFacts } = await supabase
+        .from('facts')
+        .select('id, entity_id, key, value')
+        .in('entity_id', seedIds)
+        .is('invalidated_at', null)
+        .limit(30);
+
+      if (seedFacts && seedFacts.length > 0) {
+        const seedFactIds = new Set(seedFacts.map(f => f.id));
+        facts = [...seedFacts, ...facts.filter((f: any) => !seedFactIds.has(f.id))];
+      }
+    }
+
     const latencyMs = Date.now() - startTime;
 
     return {
-      seeds: data.seeds || [],
+      seeds,
       edges: data.edges || [],
       neighbors: data.neighbors || [],
-      facts: data.facts || [],
+      facts,
       clusters: data.clusters || [],
       latencyMs
     };
@@ -68,12 +87,35 @@ async function executeFallbackSearch(
   startTime: number
 ): Promise<HybridGraphResult> {
   const { data: { user } } = await supabase.auth.getUser();
+  
+  // Try exact sentence first, then word-level matches
+  let seeds: any[] = [];
   const { data: matches } = await supabase.rpc('search_entities', {
     p_query: query,
     p_user_id: user?.id
   });
+  if (matches && matches.length > 0) {
+    seeds.push(...matches.slice(0, 6));
+  } else {
+    // Search by key nouns/words
+    const words = query.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w => w.length > 3);
+    for (const word of words.slice(0, 4)) {
+      const { data: wordMatches } = await supabase.rpc('search_entities', {
+        p_query: word,
+        p_user_id: user?.id
+      });
+      if (wordMatches && wordMatches.length > 0) {
+        seeds.push(...wordMatches.slice(0, 3));
+      }
+    }
+    const seen = new Set();
+    seeds = seeds.filter(s => {
+      if (seen.has(s.id)) return false;
+      seen.add(s.id);
+      return true;
+    }).slice(0, 6);
+  }
 
-  const seeds = (matches || []).slice(0, 6);
   const seedIds = seeds.map((s: any) => s.id);
 
   let edges: any[] = [];
@@ -113,6 +155,11 @@ async function executeFallbackSearch(
 export function formatGraphRAGContext(ragResult: HybridGraphResult): string {
   const parts: string[] = [];
 
+  const entityNameMap = new Map<string, string>();
+  [...ragResult.seeds, ...ragResult.neighbors].forEach(e => {
+    if (e.id && e.name) entityNameMap.set(e.id, e.name);
+  });
+
   if (ragResult.clusters.length > 0) {
     parts.push(`🧠 ACTIVE COGNITIVE THEMES:\n${ragResult.clusters.map(c => `- ${c.name}: ${c.summary}`).join('\n')}`);
   }
@@ -126,7 +173,10 @@ export function formatGraphRAGContext(ragResult: HybridGraphResult): string {
   }
 
   if (ragResult.facts.length > 0) {
-    parts.push(`📋 KEY FACTS:\n${ragResult.facts.map(f => `- ${f.key}: ${f.value}`).join('\n')}`);
+    parts.push(`📋 KEY FACTS:\n${ragResult.facts.slice(0, 30).map(f => {
+      const entName = entityNameMap.get(f.entity_id);
+      return entName ? `- [${entName}] ${f.key}: ${f.value}` : `- ${f.key}: ${f.value}`;
+    }).join('\n')}`);
   }
 
   return parts.join('\n\n');

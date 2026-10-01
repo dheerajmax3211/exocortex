@@ -72,8 +72,11 @@ export async function updateEntity(supabase: SupabaseClient, id: string, updates
 }
 
 export async function softDeleteEntity(supabase: SupabaseClient, id: string): Promise<void> {
-  const { error } = await supabase.from('entities').update({ deleted_at: new Date().toISOString() }).eq('id', id)
+  const now = new Date().toISOString()
+  const { error } = await supabase.from('entities').update({ deleted_at: now }).eq('id', id)
   if (error) throw error
+  // Cascade soft delete to all edges referencing this entity
+  await supabase.from('edges').update({ deleted_at: now }).or(`src.eq.${id},dst.eq.${id}`)
 }
 
 export async function searchEntities(supabase: SupabaseClient, query: string, userId?: string): Promise<Entity[]> {
@@ -103,6 +106,23 @@ export async function getEntitiesByType(
 
 // --- Edge CRUD ---
 export async function createEdge(supabase: SupabaseClient, edge: Partial<Edge>): Promise<Edge> {
+  // Check if identical active edge already exists
+  if (edge.user_id && edge.src && edge.dst && edge.relation) {
+    const { data: existing } = await supabase
+      .from('edges')
+      .select('*')
+      .eq('user_id', edge.user_id)
+      .eq('src', edge.src)
+      .eq('dst', edge.dst)
+      .eq('relation', edge.relation)
+      .is('deleted_at', null)
+      .maybeSingle()
+
+    if (existing) {
+      return existing as Edge
+    }
+  }
+
   const { data, error } = await supabase.from('edges').insert(edge).select().single()
   if (error) throw error
   return data
@@ -127,6 +147,31 @@ export async function softDeleteEdge(supabase: SupabaseClient, id: string): Prom
 
 // --- Fact CRUD ---
 export async function createFact(supabase: SupabaseClient, fact: Partial<Fact>): Promise<Fact> {
+  // Idempotency: check if fact for this entity and key already exists
+  if (fact.user_id && fact.entity_id && fact.key) {
+    const { data: existing } = await supabase
+      .from('facts')
+      .select('*')
+      .eq('user_id', fact.user_id)
+      .eq('entity_id', fact.entity_id)
+      .eq('key', fact.key)
+      .maybeSingle()
+
+    if (existing) {
+      if (fact.value && existing.value !== fact.value) {
+        const { data: updated, error: updErr } = await supabase
+          .from('facts')
+          .update({ value: fact.value })
+          .eq('id', existing.id)
+          .select()
+          .single()
+        if (updErr) throw updErr
+        return updated as Fact
+      }
+      return existing as Fact
+    }
+  }
+
   const { data, error } = await supabase.from('facts').insert(fact).select().single()
   if (error) throw error
   return data
