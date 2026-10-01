@@ -60,6 +60,53 @@ const CATEGORY_COLORS: Record<string, string> = {
 // Geometry cache for performance (shared across all nodes)
 const geoCache = new Map<string, any>();
 
+// Stable hash for pseudo-random deterministic link parameters
+function getLinkHash(link: any, index = 0): number {
+  const src = typeof link.source === 'object' ? link.source.id : String(link.source || '');
+  const tgt = typeof link.target === 'object' ? link.target.id : String(link.target || '');
+  const key = `${src}->${tgt}:${index}`;
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+const SPARK_PALETTE = [
+  '#00f0ff', // Cyber Cyan
+  '#38bdf8', // Sky Azure
+  '#818cf8', // Celestial Indigo
+  '#c084fc', // Nebula Violet
+  '#34d399', // Bio-Emerald
+  '#ffffff', // Diamond White
+  '#facc15', // Solar Topaz
+];
+
+function getOrComputeLinkSynapse(link: any, index = 0) {
+  if (link.__synapseSpeed !== undefined) {
+    return link;
+  }
+  const hash = getLinkHash(link, index);
+  const rSpeed = ((hash * 48271) % 2147483647) / 2147483647;
+  const rCount = ((hash * 16807 + 1013904223) % 2147483647) / 2147483647;
+  const rWidth = ((hash * 69069 + 1) % 2147483647) / 2147483647;
+  const rColor = ((hash * 134775813 + 1) % 2147483647) / 2147483647;
+
+  // Massively randomized speed: 0.0012 to 0.016 (over 13x speed difference!)
+  link.__synapseSpeed = 0.0012 + rSpeed * 0.0148;
+  
+  // Stochastic particle count:
+  // ~45% links have 0 particles (silent synapses)
+  // ~35% have 1 particle
+  // ~15% have 2 particles
+  // ~5% have 3 particles
+  link.__synapseParticles = rCount > 0.45 ? (rCount > 0.95 ? 3 : (rCount > 0.80 ? 2 : 1)) : 0;
+  link.__synapseConnectedParticles = 2 + Math.floor(rCount * 3); // 2 to 4 bursts when connected
+  link.__synapseWidth = 0.75 + rWidth * 1.45; // 0.75px to 2.2px
+  link.__synapseColor = SPARK_PALETTE[Math.floor(rColor * SPARK_PALETTE.length)];
+  return link;
+}
+
 export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreCanvasProps) {
   const fgRef = useRef<any>(null);
   const [graphData, setGraphData] = useState<{ nodes: Graph3DNode[]; links: Graph3DLink[] }>({ nodes: [], links: [] });
@@ -106,18 +153,19 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     });
   }, []);
 
-  // Fetch graph data
+  // Fetch graph data and enrich with randomized neural synapse characteristics
   useEffect(() => {
     const fetchGraph = async () => {
       try {
         const res = await fetch('/api/graph');
         const data = await res.json();
-        if (data.nodes && data.links) {
-          setGraphData({ nodes: data.nodes, links: data.links });
-        } else if (data.nodes && data.edges) {
-          // Backward compat with old API format
-          setGraphData({ nodes: data.nodes, links: data.edges });
-        }
+        const rawLinks = data.links || data.edges || [];
+        const enrichedLinks = rawLinks.map((l: any, idx: number) => getOrComputeLinkSynapse({ ...l }, idx));
+
+        setGraphData({ 
+          nodes: data.nodes || [], 
+          links: enrichedLinks 
+        });
       } catch (err) {
         console.error('Failed to load graph:', err);
       }
@@ -636,6 +684,65 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     return 0.4;
   }, [activeFocusNode]);
 
+  // ---- Link Directional Particles (Massively Randomized Synaptic Transmissions) ----
+  const linkParticles = useCallback((link: any) => {
+    const l = getOrComputeLinkSynapse(link);
+    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+
+    if (activeFocusNode) {
+      if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
+        return l.__synapseConnectedParticles || 3;
+      }
+      // Non-connected background links: mostly quiet (0 particles) to accentuate focused spotlight
+      return (l.__synapseParticles && l.__synapseParticles > 1) ? 1 : 0;
+    }
+
+    return l.__synapseParticles ?? 0;
+  }, [activeFocusNode]);
+
+  const linkParticleSpeed = useCallback((link: any) => {
+    const l = getOrComputeLinkSynapse(link);
+    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+
+    const baseSpeed = l.__synapseSpeed || 0.005;
+
+    if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
+      // Rapid energetic burst across active synapse
+      return baseSpeed * 1.8 + 0.004;
+    }
+
+    // Massively varied individual link speed (0.0012 to 0.016)
+    return baseSpeed;
+  }, [activeFocusNode]);
+
+  const linkParticleWidth = useCallback((link: any) => {
+    const l = getOrComputeLinkSynapse(link);
+    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+
+    const baseWidth = l.__synapseWidth || 1.1;
+
+    if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
+      return Math.max(2.0, baseWidth * 1.5);
+    }
+
+    return baseWidth;
+  }, [activeFocusNode]);
+
+  const linkParticleColor = useCallback((link: any) => {
+    const l = getOrComputeLinkSynapse(link);
+    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+
+    if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
+      return '#00f0ff';
+    }
+
+    return l.__synapseColor || '#00f0ff';
+  }, [activeFocusNode]);
+
   // Map graph data for NodeCard compatibility  
   const activeNodeForCard = useMemo(() => {
     if (!selectedNode) return null;
@@ -665,15 +772,15 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
           nodeThreeObject={renderNode}
           nodeThreeObjectExtend={false}
           
-          // Links (Neural Synapses)
+          // Links (Neural Synapses with Organic Asynchronous Impulses)
           linkCurvature={0.16}
           linkWidth={linkWidth}
           linkColor={linkColor}
           linkOpacity={1}
-          linkDirectionalParticles={activeFocusNode ? 3 : 1}
-          linkDirectionalParticleWidth={activeFocusNode ? 1.8 : 1.2}
-          linkDirectionalParticleSpeed={activeFocusNode ? 0.008 : 0.004}
-          linkDirectionalParticleColor={() => '#00f0ff'}
+          linkDirectionalParticles={linkParticles}
+          linkDirectionalParticleWidth={linkParticleWidth}
+          linkDirectionalParticleSpeed={linkParticleSpeed}
+          linkDirectionalParticleColor={linkParticleColor}
           
           // Interactions
           onNodeClick={handleNodeClick}
