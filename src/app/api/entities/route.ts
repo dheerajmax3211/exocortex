@@ -18,26 +18,45 @@ export async function GET(req: Request) {
     
     const offset = (page - 1) * limit;
 
-    let query = supabase
-      .from('entities')
-      .select('id, name, type, summary', { count: 'exact' })
-      .eq('user_id', user.id);
+    let data;
+    let count = 0;
 
-    query = query.is('deleted_at', null);
+    if (search && search.length > 0) {
+      // Use our powerful new Hybrid Search RPC (pgvector + trigram + alias match)
+      const { data: searchResults, error: searchError } = await supabase.rpc('search_entities', {
+        p_query: search,
+        p_user_id: user.id
+      });
 
-    if (type) {
-      query = query.eq('type', type);
+      if (searchError) throw searchError;
+
+      // Filter by type manually if requested since RPC doesn't do it natively yet
+      let filtered = searchResults || [];
+      if (type) {
+        filtered = filtered.filter((e: any) => e.type === type);
+      }
+      count = filtered.length;
+      data = filtered.slice(offset, offset + limit);
+    } else {
+      // Standard query
+      let query = supabase
+        .from('entities')
+        .select('id, name, type, summary', { count: 'exact' })
+        .eq('user_id', user.id)
+        .is('deleted_at', null);
+
+      if (type) {
+        query = query.eq('type', type);
+      }
+
+      query = query.range(offset, offset + limit - 1).order('created_at', { ascending: false });
+
+      const { data: qData, count: qCount, error: qError } = await query;
+      if (qError) throw qError;
+      
+      data = qData;
+      count = qCount || 0;
     }
-
-    if (search) {
-      query = query.ilike('name', `%${search}%`);
-    }
-
-    query = query.range(offset, offset + limit - 1).order('created_at', { ascending: false });
-
-    const { data, count, error } = await query;
-
-    if (error) throw error;
 
     return NextResponse.json({
       data: data || [],
