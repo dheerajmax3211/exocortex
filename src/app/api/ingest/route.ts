@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { chatJSON } from '@/lib/llm';
+import { stringSimilarity } from '@/lib/entity-resolution';
 import { z } from 'zod';
 
 const extractionSchema = z.object({
@@ -160,6 +161,25 @@ ROOT USER IDENTITY (CRITICAL):
 - NEVER create a separate 'person' entity for the user! Use temp_id='me' for the user.
 - If the user states biographical details, attach them as facts to temp_id='me'.
 
+BIOGRAPHICAL ATTRIBUTES ARE FACTS, NEVER ENTITIES (CRITICAL):
+The following personal attributes are PROPERTIES of the user. They MUST be extracted as entries in the "facts" array on temp_id='me'. Do NOT create any entity (event, item, period, other, or any type) for them:
+- Birthday / date of birth / DOB → fact: key='birth_date', value='YYYY-MM-DD'
+- Age → fact: key='age', value='<number>'
+- Full name / real name → fact: key='full_name', value='<name>'
+- Height → fact: key='height', value='<measurement>'
+- Weight → fact: key='weight', value='<measurement>'
+- Phone number → fact: key='phone', value='<number>'
+- Email → fact: key='email', value='<address>'
+- Blood type → fact: key='blood_type', value='<type>'
+- Zodiac sign / star sign → fact: key='zodiac_sign', value='<sign>'
+- MBTI / personality type → fact: key='mbti', value='<type>'
+- Hometown / native place → fact: key='hometown', value='<place>' (but the place itself CAN be an entity if it's a real location)
+- Salary / income / CTC → fact: key='salary', value='<amount>'
+- Gender / pronouns → fact: key='gender', value='<value>'
+Example: "my birthday is 4th october 1999" → entities: [me only], edges: [], facts: [{entity_temp_id: 'me', key: 'birth_date', value: '1999-10-04'}], event_date: '1999-10-04', date_precision: 'day'
+Example: "I weigh 62 kg" → entities: [me only], edges: [], facts: [{entity_temp_id: 'me', key: 'weight', value: '62 kg'}]
+If the input ONLY contains biographical attributes with no real-world entities, the entities array should contain ONLY the 'me' entity.
+
 1. WORLD KNOWLEDGE, ACRONYM EXPANSION & CANONICALIZATION (CRITICAL):
 - The user writes casually and may use colloquial abbreviations, pop-culture acronyms, equipment model names, or misspellings.
 - YOU MUST USE DEEP WORLD KNOWLEDGE TO EXPAND SLANG, ACRONYMS, AND INFORMAL REFERENCES INTO CANONICAL TITLES:
@@ -288,22 +308,43 @@ ROOT USER IDENTITY (CRITICAL):
             for (const [key, existing] of mergedEntities.entries()) {
               if (key === 'me') continue;
               
+              const existingNormName = existing.name?.toLowerCase().trim() || key;
               const existingAliases = (existing.aliases || []).map((a: string) => a.toLowerCase().trim());
+
+              // 1. Exact normalized name or alias match
               if (
                 key === normName ||
                 existingAliases.includes(normName) ||
                 entAliases.includes(key) ||
+                entAliases.includes(existingNormName) ||
                 entAliases.some((a: string) => existingAliases.includes(a))
               ) {
                 matchedKey = key;
                 break;
               }
+
+              // 2. Fuzzy string similarity (catches 'birth-day' ≈ 'birthday', 'Interstellar Movie' ≈ 'Interstellar')
+              // Use a lower threshold (0.80) since these are entities from the SAME input text
+              const sim = stringSimilarity(ent.name, existing.name || key);
+              if (sim >= 0.80 && (!ent.type || !existing.type || ent.type === existing.type)) {
+                matchedKey = key;
+                break;
+              }
+
+              // 3. Fuzzy match new name against existing aliases
+              for (const alias of existingAliases) {
+                if (alias.length > 2 && stringSimilarity(normName, alias) >= 0.82) {
+                  matchedKey = key;
+                  break;
+                }
+              }
+              if (matchedKey) break;
             }
 
             if (matchedKey) {
               const existing = mergedEntities.get(matchedKey);
               tempIdMapping.set(ent.temp_id, existing.temp_id);
-              existing.aliases = Array.from(new Set([...(existing.aliases || []), ...(ent.aliases || [])]));
+              existing.aliases = Array.from(new Set([...(existing.aliases || []), ...(ent.aliases || []), ent.name]));
               existing.props = { ...existing.props, ...ent.props };
               if (ent.summary && !existing.summary) existing.summary = ent.summary;
               if (ent.match?.existing_id && !existing.match?.existing_id) existing.match = ent.match;

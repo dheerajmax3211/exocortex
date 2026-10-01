@@ -34,10 +34,10 @@ export async function POST(req: Request) {
 
     const createdEntities = [];
 
-    // Fetch existing entities in graph for entity resolution guard
+    // Fetch existing entities in graph for entity resolution guard (include embedding for vector matching)
     const { data: dbEntities } = await supabase
       .from('entities')
-      .select('id, name, type, aliases, summary, props, start_date, end_date')
+      .select('id, name, type, aliases, summary, props, start_date, end_date, embedding')
       .eq('user_id', user.id)
       .is('deleted_at', null);
 
@@ -75,11 +75,16 @@ export async function POST(req: Request) {
       let matchedExistingId: string | null = null;
       let matchedExistingEntity: any = null;
 
+      // Compute embedding upfront so both vector matching AND entity creation can use it
+      const { getEmbedding } = await import('@/lib/embeddings');
+      const entEmbedding = await getEmbedding(`${ent.name} (${ent.type}): ${ent.summary || ''} ${JSON.stringify(ent.props || {})}`);
+
       if (ent.match?.existing_id && ent.match.confidence > 0.8) {
         matchedExistingId = ent.match.existing_id;
         matchedExistingEntity = activeEntities.find(e => e.id === matchedExistingId);
       } else {
-        const resolution = resolveEntityMatch(ent, activeEntities);
+        // Pass embedding into resolution so Stage 4 (vector cosine) can fire
+        const resolution = resolveEntityMatch({ ...ent, embedding: entEmbedding }, activeEntities);
         if (resolution && resolution.confidence >= 0.85) {
           matchedExistingId = resolution.matchedId;
           matchedExistingEntity = resolution.existingEntity;
@@ -109,9 +114,6 @@ export async function POST(req: Request) {
           await db.updateEntity(supabase, matchedExistingId, updates);
         }
       } else {
-        const { getEmbedding } = await import('@/lib/embeddings');
-        const embedding = await getEmbedding(`${ent.name} (${ent.type}): ${ent.summary || ''} ${JSON.stringify(ent.props || {})}`);
-
         const newEnt = await db.createEntity(supabase, {
           user_id: user.id,
           type: ent.type,
@@ -120,7 +122,7 @@ export async function POST(req: Request) {
           summary: ent.summary || null,
           props: ent.props || {},
           created_from_entry: entry_id,
-          embedding
+          embedding: entEmbedding
         } as any);
         
         if (newEnt) {
