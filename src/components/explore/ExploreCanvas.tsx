@@ -113,7 +113,6 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   const [threeLib, setThreeLib] = useState<typeof import('three') | null>(null);
   const [spriteTextLib, setSpriteTextLib] = useState<any>(null);
   const [mounted, setMounted] = useState(false);
-  const [activeFiringKeys, setActiveFiringKeys] = useState<Set<string>>(new Set());
 
   // Active focus target for neural spotlight highlighting
   const activeFocusNode = hoveredNode || selectedNode;
@@ -151,17 +150,111 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     });
   }, []);
 
-  // Fetch graph data and enrich with randomized neural synapse characteristics
+  // Fetch graph data, orient all links outward from core, and calculate mistimed branch offsets
   useEffect(() => {
     const fetchGraph = async () => {
       try {
         const res = await fetch('/api/graph');
         const data = await res.json();
+        const rawNodes: Graph3DNode[] = data.nodes || [];
         const rawLinks = data.links || data.edges || [];
-        const enrichedLinks = rawLinks.map((l: any, idx: number) => getOrComputeLinkSynapse({ ...l }, idx));
+
+        // 1. Identify Root User Node (the core)
+        const rootNode = rawNodes.find(n => n.isUser) || rawNodes[0];
+        const rootId = rootNode?.id;
+
+        // 2. Build adjacency for BFS depth calculation from core
+        const adj = new Map<string, string[]>();
+        rawLinks.forEach((l: any) => {
+          const s = typeof l.source === 'object' ? l.source.id : String(l.source);
+          const t = typeof l.target === 'object' ? l.target.id : String(l.target);
+          if (!adj.has(s)) adj.set(s, []);
+          if (!adj.has(t)) adj.set(t, []);
+          adj.get(s)!.push(t);
+          adj.get(t)!.push(s);
+        });
+
+        // 3. BFS from Root to compute outward depth & primary branch assignment
+        const nodeDepth = new Map<string, number>();
+        const nodeBranch = new Map<string, number>();
+
+        if (rootId) {
+          nodeDepth.set(rootId, 0);
+          nodeBranch.set(rootId, 0);
+
+          const primaryBranches = adj.get(rootId) || [];
+          const queue: { id: string; depth: number; branch: number }[] = [];
+
+          primaryBranches.forEach((childId, bIdx) => {
+            nodeDepth.set(childId, 1);
+            nodeBranch.set(childId, bIdx);
+            queue.push({ id: childId, depth: 1, branch: bIdx });
+          });
+
+          while (queue.length > 0) {
+            const { id: currId, depth: currDepth, branch: currBranch } = queue.shift()!;
+            const neighbors = adj.get(currId) || [];
+            for (const nId of neighbors) {
+              if (!nodeDepth.has(nId)) {
+                nodeDepth.set(nId, currDepth + 1);
+                nodeBranch.set(nId, currBranch);
+                queue.push({ id: nId, depth: currDepth + 1, branch: currBranch });
+              }
+            }
+          }
+        }
+
+        const totalBranches = Math.max(1, (adj.get(rootId) || []).length);
+
+        // 4. Orient EVERY link OUTWARD (source = closer to core, target = further towards end)
+        // and calculate mistimed branch phase offsets and low-to-moderate speeds
+        const enrichedLinks = rawLinks.map((l: any, idx: number) => {
+          let s = typeof l.source === 'object' ? l.source.id : String(l.source);
+          let t = typeof l.target === 'object' ? l.target.id : String(l.target);
+
+          let dS = nodeDepth.get(s) ?? 1;
+          let dT = nodeDepth.get(t) ?? 1;
+
+          // If reversed (pointing inward toward core), flip so source is always closer to core
+          if (dS > dT) {
+            const temp = s; s = t; t = temp;
+            const tempD = dS; dS = dT; dT = tempD;
+          }
+
+          const linkDepth = dS;
+          const branchIdx = nodeBranch.get(t) ?? (idx % totalBranches);
+
+          const hash = getLinkHash({ source: s, target: t }, idx);
+          const jitter = ((hash % 100) / 100) * 0.06;
+
+          // Staggered branch start: each branch initiates its pulse at a distinct mistimed point in the cycle
+          const branchStagger = branchIdx / totalBranches;
+          // Cascading depth progression: as pulse reaches depth N, it continues naturally into depth N+1
+          const depthProgression = linkDepth * 0.22;
+          const offset = (branchStagger + depthProgression + jitter) % 1.0;
+
+          // Low to moderate steady speed: 0.0024 to 0.0036 (takes ~4.6 to 7.0 seconds to glide across)
+          // Smooth and observable without blinking and missing it!
+          const speed = 0.0024 + (((hash >> 2) % 100) / 100) * 0.0012;
+
+          // Particle width: slightly more prominent near core, refined at extremities
+          const width = linkDepth === 0 ? 1.6 : (linkDepth === 1 ? 1.3 : 1.0);
+
+          return {
+            ...l,
+            source: s,
+            target: t,
+            __linkDepth: linkDepth,
+            __branchIdx: branchIdx,
+            __particleOffset: offset,
+            __particleSpeed: speed,
+            __particleWidth: width,
+            __synapseColor: SPARK_PALETTE[branchIdx % SPARK_PALETTE.length],
+          };
+        });
 
         setGraphData({ 
-          nodes: data.nodes || [], 
+          nodes: rawNodes, 
           links: enrichedLinks 
         });
       } catch (err) {
@@ -170,44 +263,6 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     };
     fetchGraph();
   }, []);
-
-  // Dynamic Synaptic Wanderer: systematically migrates light pulses across DIFFERENT branches
-  useEffect(() => {
-    if (graphData.links.length === 0 || activeFocusNode) return;
-
-    const pickDiverseSynapses = () => {
-      const allLinks = graphData.links;
-      if (allLinks.length === 0) return;
-
-      // Group links by their source entity to guarantee branch diversity
-      const branchBuckets = new Map<string, any[]>();
-      allLinks.forEach((l: any) => {
-        const srcId = typeof l.source === 'object' ? l.source.id : String(l.source);
-        if (!branchBuckets.has(srcId)) branchBuckets.set(srcId, []);
-        branchBuckets.get(srcId)!.push(l);
-      });
-
-      const bucketKeys = Array.from(branchBuckets.keys()).sort(() => Math.random() - 0.5);
-      const chosen = new Set<string>();
-
-      // Select 3 to 4 links from strictly distinct branch buckets
-      const countToPick = Math.min(4, bucketKeys.length);
-      for (let i = 0; i < countToPick; i++) {
-        const bucket = branchBuckets.get(bucketKeys[i])!;
-        const randomLink = bucket[Math.floor(Math.random() * bucket.length)];
-        chosen.add(getLinkId(randomLink));
-      }
-
-      setActiveFiringKeys(chosen);
-    };
-
-    // Initial diverse pick
-    pickDiverseSynapses();
-
-    // Migrate to brand new diverse branches every 2.8 seconds
-    const interval = setInterval(pickDiverseSynapses, 2800);
-    return () => clearInterval(interval);
-  }, [graphData.links, activeFocusNode]);
 
   // Configure physics, ambient starfield, and controls after graph mounts
   useEffect(() => {
@@ -720,65 +775,58 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     return 0.4;
   }, [activeFocusNode]);
 
-  // ---- Link Directional Particles (Dynamic Cross-Branch Neural Firings) ----
+  // ---- Link Directional Particles: Outward Flow from Core to All Nodes, Mistimed & Low-to-Moderate Speed ----
   const linkParticles = useCallback((link: any) => {
-    const srcId = typeof link.source === 'object' ? link.source.id : link.source;
-    const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
-
     if (activeFocusNode) {
+      const srcId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
       if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
-        // Only 1 single focused light pulse on directly connected pathways
         return 1;
       }
-      // Zero particles on all background links during focus
-      return 0;
+      return 0; // Quiet non-connected links during focused inspection
     }
 
-    // In ambient idle mode: only links chosen in the current multi-branch wave fire
-    const key = getLinkId(link);
-    return activeFiringKeys.has(key) ? 1 : 0;
-  }, [activeFocusNode, activeFiringKeys]);
+    // In ambient mode: ALL nodes receive the light, flowing from core outward along all branches!
+    return 1;
+  }, [activeFocusNode]);
+
+  const linkParticleOffset = useCallback((link: any) => {
+    return link.__particleOffset ?? 0;
+  }, []);
 
   const linkParticleSpeed = useCallback((link: any) => {
-    const l = getOrComputeLinkSynapse(link);
-    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
-    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
-
-    const baseSpeed = l.__synapseSpeed || 0.003;
-
-    if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
-      // Smooth, deliberate pulse on active paths
-      return 0.007;
+    if (activeFocusNode) {
+      const srcId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
+      if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
+        return 0.0055; // Slightly enhanced focus speed
+      }
     }
-
-    // Gentle organic variance across the few active background links
-    return baseSpeed;
+    // Low to moderate steady traversal: 0.0024 to 0.0036 (takes ~4.6 to 7.0 seconds per link)
+    // Smooth and observable without blinking and missing it!
+    return link.__particleSpeed ?? 0.0028;
   }, [activeFocusNode]);
 
   const linkParticleWidth = useCallback((link: any) => {
-    const l = getOrComputeLinkSynapse(link);
-    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
-    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
-
-    const baseWidth = l.__synapseWidth || 0.9;
-
-    if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
-      return 1.6; // Refined focused pulse
+    if (activeFocusNode) {
+      const srcId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
+      if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
+        return 2.0;
+      }
     }
-
-    return baseWidth;
+    return link.__particleWidth ?? 1.1;
   }, [activeFocusNode]);
 
   const linkParticleColor = useCallback((link: any) => {
-    const l = getOrComputeLinkSynapse(link);
-    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
-    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
-
-    if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
-      return '#00f0ff';
+    if (activeFocusNode) {
+      const srcId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
+      if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
+        return '#00f0ff';
+      }
     }
-
-    return l.__synapseColor || '#00f0ff';
+    return link.__synapseColor || '#00f0ff';
   }, [activeFocusNode]);
 
   // Map graph data for NodeCard compatibility  
@@ -810,12 +858,13 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
           nodeThreeObject={renderNode}
           nodeThreeObjectExtend={false}
           
-          // Links (Neural Synapses with Organic Asynchronous Impulses)
+          // Links (Outward Cascading Neural Synapses with Mistimed Impulses)
           linkCurvature={0.16}
           linkWidth={linkWidth}
           linkColor={linkColor}
           linkOpacity={1}
           linkDirectionalParticles={linkParticles}
+          linkDirectionalParticleOffset={linkParticleOffset}
           linkDirectionalParticleWidth={linkParticleWidth}
           linkDirectionalParticleSpeed={linkParticleSpeed}
           linkDirectionalParticleColor={linkParticleColor}
