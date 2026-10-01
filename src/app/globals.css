@@ -2,32 +2,19 @@
 
 @layer base {
   :root {
-    --background: #ffffff;
-    --foreground: #0a0a0f;
-    --accent: #6366f1; /* indigo-500 */
-    --accent-glow: rgba(99, 102, 241, 0.4);
-    --border: #e2e8f0;
-    --card: #f8fafc;
-    --muted: #64748b;
-    --glass: rgba(255, 255, 255, 0.7);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --background: #0a0a0f;
-      --foreground: #f8fafc;
-      --accent: #818cf8; /* indigo-400 */
-      --accent-glow: rgba(129, 140, 248, 0.4);
-      --border: #1e293b;
-      --card: #0f111a;
-      --muted: #94a3b8;
-      --glass: rgba(10, 10, 15, 0.7);
-    }
+    --background: #030308;
+    --foreground: #f8fafc;
+    --accent: #38bdf8; /* cyber cyan */
+    --accent-glow: rgba(56, 189, 248, 0.45);
+    --border: rgba(255, 255, 255, 0.08);
+    --card: #0a0b14;
+    --muted: #94a3b8;
+    --glass: rgba(10, 11, 20, 0.75);
   }
 
   html {
-    background-color: var(--background);
-    color: var(--foreground);
+    background-color: #030308;
+    color: #f8fafc;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }

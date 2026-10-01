@@ -45,7 +45,11 @@ export default function ExploreView({ nodeCount, edgeCount }: ExploreViewProps) 
   }, [])
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between bg-[#0a0a0f] text-white overflow-hidden relative">
+    <main className="flex min-h-screen flex-col items-center justify-between bg-[#030308] text-white overflow-hidden relative selection:bg-cyan-500/30">
+      {/* Subtle cosmic vignette & atmosphere */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(56,189,248,0.08),rgba(0,0,0,0))] pointer-events-none z-10" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,rgba(129,140,248,0.05),rgba(0,0,0,0))] pointer-events-none z-10" />
+
       <HUD 
         nodeCount={nodeCount} 
         edgeCount={edgeCount} 

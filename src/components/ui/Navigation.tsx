@@ -15,32 +15,36 @@ export default function Navigation() {
   ]
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-30 glass-panel safe-area-pb border-t border-[var(--border)]">
-      <div className="flex items-center justify-around px-2 py-3 h-[72px]">
+    <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 pointer-events-auto">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/10 bg-[#0a0a12]/75 backdrop-blur-2xl shadow-[0_12px_40px_rgba(0,0,0,0.8)] transition-all">
         {tabs.map((tab) => {
           const isActive = pathname === tab.path
           return (
             <Link 
               key={tab.name} 
               href={tab.path}
-              className={`flex flex-col items-center justify-center w-16 h-12 rounded-2xl transition-colors ${
-                isActive ? 'text-[var(--accent)]' : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-full text-xs font-mono tracking-wider transition-all duration-200 group ${
+                isActive 
+                  ? 'bg-white/10 text-white shadow-[0_0_15px_rgba(56,189,248,0.2)] border border-white/15' 
+                  : 'text-white/50 hover:text-white hover:bg-white/5'
               }`}
             >
               <svg 
-                width="24" 
-                height="24" 
+                width="16" 
+                height="16" 
                 viewBox="0 0 24 24" 
                 fill={isActive ? 'currentColor' : 'none'} 
                 stroke="currentColor" 
                 strokeWidth={isActive ? '0' : '2'} 
                 strokeLinecap="round" 
                 strokeLinejoin="round"
-                className="mb-1"
+                className={`transition-transform duration-200 ${isActive ? 'text-cyan-400 scale-105' : 'group-hover:scale-110'}`}
               >
                 {tab.icon}
               </svg>
-              <span className="text-[10px] font-medium">{tab.name}</span>
+              <span className={`text-[11px] font-medium transition-all ${isActive ? 'inline text-white' : 'hidden md:inline'}`}>
+                {tab.name}
+              </span>
             </Link>
           )
         })}

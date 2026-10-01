@@ -40,21 +40,21 @@ interface ExploreCanvasProps {
   focusedNodeId?: string | null;
 }
 
-// ---- Category Colors ----
+// ---- Category Colors (2026 Luminescent Gemstone Palette) ----
 const CATEGORY_COLORS: Record<string, string> = {
-  person:     '#6366f1',
-  place:      '#22c55e',
-  restaurant: '#f59e0b',
-  dish:       '#ef4444',
-  movie:      '#8b5cf6',
-  show:       '#a855f7',
-  book:       '#eab308',
-  event:      '#06b6d4',
-  period:     '#ec4899',
-  school:     '#14b8a6',
-  org:        '#3b82f6',
-  item:       '#f97316',
-  other:      '#94a3b8',
+  person:     '#f472b6', // Rose Quartz / Connection
+  place:      '#34d399', // Bio-Emerald / Location
+  restaurant: '#fbbf24', // Warm Amber / Culinary
+  dish:       '#fb923c', // Sunset Coral / Taste
+  movie:      '#c084fc', // Luminous Violet / Cinema
+  show:       '#a855f7', // Electric Violet / Media
+  book:       '#38bdf8', // Cyber Azure / Literature
+  event:      '#facc15', // Solar Topaz / Occasion
+  period:     '#e879f9', // Orchid Mist / Era
+  school:     '#2dd4bf', // Seafoam Teal / Education
+  org:        '#60a5fa', // Steel Cobalt / Industry
+  item:       '#94a3b8', // Titanium Silver / Artifact
+  other:      '#64748b', // Slate / General
 };
 
 // Geometry cache for performance (shared across all nodes)
@@ -100,21 +100,78 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     fetchGraph();
   }, []);
 
-  // Configure physics and controls after graph mounts
+  // Configure physics, ambient starfield, and controls after graph mounts
   useEffect(() => {
-    if (!fgRef.current || graphData.nodes.length === 0) return;
+    if (!fgRef.current || graphData.nodes.length === 0 || !threeLib) return;
 
     const fg = fgRef.current;
+    const THREE = threeLib;
 
     // OrbitControls
     const controls = fg.controls?.();
     if (controls) {
       controls.autoRotate = true;
-      controls.autoRotateSpeed = 0.3;
+      controls.autoRotateSpeed = 0.25;
       controls.enableDamping = true;
       controls.dampingFactor = 0.12;
       controls.minDistance = 40;
       controls.maxDistance = 600;
+    }
+
+    // Add ambient cosmic starfield to Three.js scene for depth & parallax
+    const scene = fg.scene?.();
+    if (scene && !scene.getObjectByName('ambient-cosmic-starfield')) {
+      const starCount = 1000;
+      const starGeometry = new THREE.BufferGeometry();
+      const starPositions = new Float32Array(starCount * 3);
+      const starColors = new Float32Array(starCount * 3);
+
+      for (let i = 0; i < starCount; i++) {
+        const r = 220 + Math.random() * 480;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+
+        starPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+        starPositions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+        starPositions[i * 3 + 2] = r * Math.cos(phi);
+
+        const brightness = 0.2 + Math.random() * 0.7;
+        starColors[i * 3] = brightness * 0.85;
+        starColors[i * 3 + 1] = brightness * 0.95;
+        starColors[i * 3 + 2] = brightness;
+      }
+
+      starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+      starGeometry.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
+
+      const starMaterial = new THREE.PointsMaterial({
+        size: 1.2,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.65,
+        blending: THREE.AdditiveBlending,
+      });
+
+      const starfield = new THREE.Points(starGeometry, starMaterial);
+      starfield.name = 'ambient-cosmic-starfield';
+      scene.add(starfield);
+    }
+
+    // Directional and ambient lighting for specular gloss
+    if (scene && !scene.getObjectByName('ambient-cosmic-lighting')) {
+      const lightGroup = new THREE.Group();
+      lightGroup.name = 'ambient-cosmic-lighting';
+      lightGroup.add(new THREE.AmbientLight(0xffffff, 0.9));
+      
+      const dirLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
+      dirLight.position.set(150, 200, 100);
+      lightGroup.add(dirLight);
+
+      const rimLight = new THREE.DirectionalLight(0x818cf8, 0.8);
+      rimLight.position.set(-150, -150, -100);
+      lightGroup.add(rimLight);
+
+      scene.add(lightGroup);
     }
 
     // D3 Force tuning for hierarchical constellation & lobe layout (Arbitrary Depth N >= 3)
@@ -141,7 +198,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     fg.d3Force?.('center')?.strength(0.04);
 
     fg.d3ReheatSimulation?.();
-  }, [graphData]);
+  }, [graphData, threeLib]);
 
   // Handle focus jumping
   useEffect(() => {
@@ -272,7 +329,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     );
   }, []);
 
-  // ---- Custom 3D Node Rendering ----
+  // ---- Custom 3D Node Rendering (2026 Crystalline Singularity Aesthetic) ----
   const renderNode = useCallback((nodeObj: any) => {
     const node = nodeObj as Graph3DNode;
     if (!threeLib || !spriteTextLib) return new threeLib!.Group();
@@ -286,60 +343,77 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const isCategory = Boolean(node.isCategory || (node as any).props?.is_category);
 
     let colorHex = CATEGORY_COLORS[node.type] || CATEGORY_COLORS.other;
-    if (isDomainHub) colorHex = '#06b6d4'; // Cyan for Level 1 Domain Hubs
-    else if (isCategory) colorHex = '#a855f7'; // Violet for Level 2 Categories
+    if (isUser) colorHex = '#ffffff';
+    else if (isDomainHub) colorHex = '#00f0ff'; // Cyber Cyan for Level 1 Domain Hubs
+    else if (isCategory) colorHex = '#818cf8'; // Celestial Indigo for Level 2 Categories
 
-    let baseRadius = Math.max(2.4, Math.min(4.8, 2.3 + (node.connectionCount || 0) * 0.3));
-    if (isUser) baseRadius = 7.0;
-    else if (isDomainHub) baseRadius = 5.2;
-    else if (isCategory) baseRadius = 4.0;
+    // Refined node sizes (sleek crystalline nodes rather than bulky cartoon spheres)
+    let baseRadius = Math.max(1.7, Math.min(3.4, 1.7 + (node.connectionCount || 0) * 0.22));
+    if (isUser) baseRadius = 5.6;
+    else if (isDomainHub) baseRadius = 3.8;
+    else if (isCategory) baseRadius = 2.8;
 
-    // 1. Core sphere with emissive glow
+    // 1. Core sphere with specular gloss and emissive singularity
     const coreGeoKey = `core-${baseRadius}`;
     if (!geoCache.has(coreGeoKey)) {
-      geoCache.set(coreGeoKey, new THREE.SphereGeometry(baseRadius, (isUser || isDomainHub || isCategory) ? 32 : 20, (isUser || isDomainHub || isCategory) ? 32 : 20));
+      geoCache.set(coreGeoKey, new THREE.SphereGeometry(baseRadius, (isUser || isDomainHub || isCategory) ? 32 : 18, (isUser || isDomainHub || isCategory) ? 32 : 18));
     }
     const coreMat = new THREE.MeshStandardMaterial({
-      color: colorHex,
-      emissive: colorHex,
-      emissiveIntensity: isUser ? 0.9 : (isDomainHub ? 0.75 : (isCategory ? 0.6 : 0.45)),
-      roughness: 0.15,
-      metalness: 0.85,
+      color: isUser ? '#ffffff' : colorHex,
+      emissive: isUser ? '#38bdf8' : colorHex,
+      emissiveIntensity: isUser ? 1.4 : (isDomainHub ? 0.95 : (isCategory ? 0.75 : 0.45)),
+      roughness: 0.1,
+      metalness: 0.92,
     });
     const coreMesh = new THREE.Mesh(geoCache.get(coreGeoKey)!, coreMat);
     group.add(coreMesh);
 
-    // 2. Outer glow halo (additive blended, slightly larger)
-    const glowRadius = baseRadius * (isUser ? 1.6 : (isDomainHub ? 1.45 : (isCategory ? 1.35 : 1.25)));
+    // 2. Outer ethereal glow halo (additive blended)
+    const glowRadius = baseRadius * (isUser ? 1.55 : (isDomainHub ? 1.38 : (isCategory ? 1.28 : 1.18)));
     const glowGeoKey = `glow-${glowRadius}`;
     if (!geoCache.has(glowGeoKey)) {
       geoCache.set(glowGeoKey, new THREE.SphereGeometry(glowRadius, 16, 16));
     }
     const glowMat = new THREE.MeshBasicMaterial({
-      color: colorHex,
+      color: isUser ? '#38bdf8' : colorHex,
       transparent: true,
-      opacity: isUser ? 0.22 : (isDomainHub ? 0.2 : (isCategory ? 0.16 : 0.1)),
+      opacity: isUser ? 0.38 : (isDomainHub ? 0.26 : (isCategory ? 0.18 : 0.1)),
       blending: THREE.AdditiveBlending,
       side: THREE.BackSide,
     });
-    const glowMesh = new THREE.Mesh(geoCache.get(glowGeoKey)!, glowMat);
-    group.add(glowMesh);
+    group.add(new THREE.Mesh(geoCache.get(glowGeoKey)!, glowMat));
 
-    // 3. Second, larger glow layer for user node or domain hubs
-    if (isUser || isDomainHub) {
-      const outerGlowRadius = baseRadius * (isUser ? 2.2 : 1.9);
-      const outerGeoKey = `outerGlow-${outerGlowRadius}`;
-      if (!geoCache.has(outerGeoKey)) {
-        geoCache.set(outerGeoKey, new THREE.SphereGeometry(outerGlowRadius, 12, 12));
+    // 3. Root User Node: Quantum Orbital Ring & Ethereal Corona
+    if (isUser) {
+      const ringGeoKey = 'user-quantum-ring';
+      if (!geoCache.has(ringGeoKey as any)) {
+        const ringGeo = new THREE.RingGeometry(baseRadius * 1.6, baseRadius * 1.7, 48);
+        geoCache.set(ringGeoKey as any, ringGeo as any);
+      }
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: '#38bdf8',
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+      });
+      const ringMesh = new THREE.Mesh(geoCache.get(ringGeoKey as any) as any, ringMat);
+      ringMesh.rotation.x = Math.PI / 2.6;
+      group.add(ringMesh);
+
+      // Whispering outer corona
+      const outerGlowGeoKey = 'user-outer-corona';
+      if (!geoCache.has(outerGlowGeoKey)) {
+        geoCache.set(outerGlowGeoKey, new THREE.SphereGeometry(baseRadius * 2.3, 16, 16));
       }
       const outerGlowMat = new THREE.MeshBasicMaterial({
-        color: colorHex,
+        color: '#818cf8',
         transparent: true,
-        opacity: isUser ? 0.08 : 0.05,
+        opacity: 0.12,
         blending: THREE.AdditiveBlending,
         side: THREE.BackSide,
       });
-      group.add(new THREE.Mesh(geoCache.get(outerGeoKey)!, outerGlowMat));
+      group.add(new THREE.Mesh(geoCache.get(outerGlowGeoKey)!, outerGlowMat));
     }
 
     // 4. Tension additive shell
@@ -358,23 +432,18 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
         blending: THREE.AdditiveBlending,
         side: THREE.BackSide,
       });
-      
-      const tensionMesh = new THREE.Mesh(geoCache.get(tensionGeoKey)!, tensionMat);
-      
-      // Simple static shell (ideally this would pulse in an animation loop)
-      group.add(tensionMesh);
+      group.add(new THREE.Mesh(geoCache.get(tensionGeoKey)!, tensionMat));
     }
 
-    // 5. Text label (camera-facing sprite)
+    // 5. Clean, elegant typography (NO CLUNKY BOXES!)
     const sprite = new SpriteText(node.name || node.id);
-    sprite.color = isDomainHub ? '#38bdf8' : (isCategory ? '#c084fc' : '#ffffff');
-    sprite.textHeight = isUser ? 4 : (isDomainHub ? 3.2 : (isCategory ? 2.7 : 2.2));
-    sprite.fontSize = 90;
-    sprite.fontFace = 'Inter, system-ui, sans-serif';
-    sprite.backgroundColor = 'rgba(10, 10, 15, 0.75)';
-    sprite.padding = 1.5;
-    sprite.borderRadius = 3;
-    sprite.position.set(0, baseRadius + (isUser ? 5 : (isDomainHub ? 4 : (isCategory ? 3.5 : 3.0))), 0);
+    sprite.color = isUser ? '#ffffff' : (isDomainHub ? '#38bdf8' : (isCategory ? '#c084fc' : 'rgba(255, 255, 255, 0.85)'));
+    sprite.textHeight = isUser ? 3.2 : (isDomainHub ? 2.4 : (isCategory ? 1.9 : 1.5));
+    sprite.fontSize = 80;
+    sprite.fontFace = 'JetBrains Mono, -apple-system, system-ui, sans-serif';
+    sprite.backgroundColor = undefined; // PURE FLOATING TYPOGRAPHY - NO DARK BOX!
+    sprite.padding = 0;
+    sprite.position.set(0, baseRadius + (isUser ? 4.0 : (isDomainHub ? 3.0 : (isCategory ? 2.4 : 1.8))), 0);
     group.add(sprite);
 
     return group;
@@ -404,23 +473,21 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     if (controls) controls.autoRotate = true;
   }, []);
 
-  // ---- Link styling ----
+  // ---- Link styling (Neural Synaptic Filaments) ----
   const linkColor = useCallback((link: any) => {
-    if (!selectedNode) return 'rgba(255, 255, 255, 0.08)';
     const srcId = typeof link.source === 'object' ? link.source.id : link.source;
     const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
-    if (srcId === selectedNode.id || tgtId === selectedNode.id) {
-      return 'rgba(99, 102, 241, 0.6)';
+    if (selectedNode && (srcId === selectedNode.id || tgtId === selectedNode.id)) {
+      return 'rgba(56, 189, 248, 0.85)'; // Radiant cyber-cyan active energy beam
     }
-    return 'rgba(255, 255, 255, 0.04)';
+    return 'rgba(148, 163, 184, 0.12)'; // Ethereal starlight filament
   }, [selectedNode]);
 
   const linkWidth = useCallback((link: any) => {
-    if (!selectedNode) return 0.5;
     const srcId = typeof link.source === 'object' ? link.source.id : link.source;
     const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
-    if (srcId === selectedNode.id || tgtId === selectedNode.id) return 2;
-    return 0.3;
+    if (selectedNode && (srcId === selectedNode.id || tgtId === selectedNode.id)) return 1.8;
+    return 0.4;
   }, [selectedNode]);
 
   // Map graph data for NodeCard compatibility  
@@ -438,29 +505,29 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     };
   }, [selectedNode]);
 
-  if (!mounted) return <div className="fixed inset-0 bg-[#0a0a0f]" />;
+  if (!mounted) return <div className="fixed inset-0 bg-[#030308]" />;
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-[#0a0a0f]">
+    <div className="fixed inset-0 overflow-hidden bg-[#030308]">
       {threeLib && spriteTextLib && (
         <ForceGraph3D
           ref={fgRef}
           graphData={graphData}
-          backgroundColor="#0a0a0f"
+          backgroundColor="#030308"
           
           // Custom 3D node rendering
           nodeThreeObject={renderNode}
           nodeThreeObjectExtend={false}
           
-          // Links
-          linkCurvature={0.15}
+          // Links (Neural Synapses)
+          linkCurvature={0.12}
           linkWidth={linkWidth}
           linkColor={linkColor}
           linkOpacity={1}
           linkDirectionalParticles={1}
-          linkDirectionalParticleWidth={1.2}
-          linkDirectionalParticleSpeed={0.004}
-          linkDirectionalParticleColor={() => '#6366f1'}
+          linkDirectionalParticleWidth={1.4}
+          linkDirectionalParticleSpeed={0.005}
+          linkDirectionalParticleColor={() => '#38bdf8'}
           
           // Interactions
           onNodeClick={handleNodeClick}
@@ -493,24 +560,23 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
         />
       )}
 
-      {/* Floating 3D Navigation & Zoom Controls */}
-      <div className="fixed bottom-24 left-5 z-20 flex flex-col gap-2 pointer-events-auto">
+      {/* Floating 3D Navigation & Zoom Controls (Cybernetic Glass Visor) */}
+      <div className="fixed bottom-24 left-6 z-20 flex flex-col gap-2 pointer-events-auto">
         <button
           onClick={resetCamera}
-          className="p-2.5 rounded-xl bg-black/60 hover:bg-black/90 backdrop-blur-md border border-white/10 text-white/80 hover:text-white transition-all shadow-lg flex items-center gap-1.5 text-xs font-mono"
-          title="Recenter Galaxy View"
+          className="p-2.5 rounded-full bg-black/40 hover:bg-white/10 backdrop-blur-xl border border-white/10 text-white/70 hover:text-white transition-all shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex items-center justify-center group"
+          title="Recenter Neural Map"
           aria-label="Recenter view"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="group-hover:rotate-45 transition-transform duration-300">
             <circle cx="12" cy="12" r="10"></circle>
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
-          <span className="hidden sm:inline">Recenter</span>
         </button>
-        <div className="flex bg-black/60 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden shadow-lg">
+        <div className="flex flex-col bg-black/40 backdrop-blur-xl border border-white/10 rounded-full overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
           <button
             onClick={zoomIn}
-            className="p-2.5 hover:bg-white/10 text-white/80 hover:text-white transition-colors"
+            className="p-2.5 hover:bg-white/10 text-white/70 hover:text-white transition-colors flex items-center justify-center"
             title="Zoom In"
             aria-label="Zoom in"
           >
@@ -519,10 +585,10 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
               <line x1="5" y1="12" x2="19" y2="12"></line>
             </svg>
           </button>
-          <div className="w-[1px] bg-white/10" />
+          <div className="h-[1px] w-full bg-white/10" />
           <button
             onClick={zoomOut}
-            className="p-2.5 hover:bg-white/10 text-white/80 hover:text-white transition-colors"
+            className="p-2.5 hover:bg-white/10 text-white/70 hover:text-white transition-colors flex items-center justify-center"
             title="Zoom Out"
             aria-label="Zoom out"
           >

@@ -12,19 +12,19 @@ interface NodeCardProps {
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
-  person: '#6366f1',
-  place: '#22c55e',
-  restaurant: '#f59e0b',
-  dish: '#ef4444',
-  movie: '#8b5cf6',
-  show: '#a855f7',
-  book: '#eab308',
-  event: '#06b6d4',
-  period: '#ec4899',
-  school: '#14b8a6',
-  org: '#3b82f6',
-  item: '#f97316',
-  other: '#94a3b8',
+  person:     '#f472b6',
+  place:      '#34d399',
+  restaurant: '#fbbf24',
+  dish:       '#fb923c',
+  movie:      '#c084fc',
+  show:       '#a855f7',
+  book:       '#38bdf8',
+  event:      '#facc15',
+  period:     '#e879f9',
+  school:     '#2dd4bf',
+  org:        '#60a5fa',
+  item:       '#94a3b8',
+  other:      '#64748b',
 };
 
 export default function NodeCard({ node, x, y, onClose, onViewProfile }: NodeCardProps) {
@@ -86,17 +86,25 @@ export default function NodeCard({ node, x, y, onClose, onViewProfile }: NodeCar
   return (
     <div
       ref={cardRef}
-      className={`fixed z-30 w-72 bg-[#0e0e16]/95 backdrop-blur-xl border border-white/15 rounded-2xl p-4 shadow-2xl transition-all duration-150 ease-out ${mounted ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
+      className={`fixed z-30 w-80 bg-[#070812]/85 backdrop-blur-2xl border border-white/15 rounded-2xl p-4 shadow-[0_16px_50px_rgba(0,0,0,0.8)] transition-all duration-200 ease-out overflow-hidden ${mounted ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`}
       style={{
         left: clampedPos.x,
         top: clampedPos.y,
         transformOrigin: 'top left'
       }}
     >
+      {/* Top subtle specular highlight */}
+      <div 
+        className="absolute top-0 left-0 right-0 h-[2px] opacity-75"
+        style={{
+          background: `linear-gradient(90deg, transparent, ${color}, transparent)`
+        }}
+      />
+
       {onClose && (
         <button 
           onClick={onClose}
-          className="absolute top-3 right-3 text-white/40 hover:text-white transition-colors"
+          className="absolute top-3 right-3 w-6 h-6 rounded-full bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-colors flex items-center justify-center text-sm"
           aria-label="Close fact card"
         >
           &times;
@@ -105,30 +113,33 @@ export default function NodeCard({ node, x, y, onClose, onViewProfile }: NodeCar
       
       <div className="flex items-center gap-2 mb-2">
         <span 
-          className="w-2.5 h-2.5 rounded-full" 
+          className="w-2 h-2 rounded-full" 
           style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }}
         />
-        <span className="text-[10px] font-mono font-semibold text-white/70 uppercase tracking-widest">
+        <span className="text-[10px] font-mono font-semibold text-white/60 uppercase tracking-[0.2em]">
           {node.type}
         </span>
       </div>
       
-      <h3 className="text-lg font-serif font-bold text-white mb-2 leading-tight">
+      <h3 className="text-base font-sans font-bold text-white mb-2 leading-snug tracking-tight">
         {node.label}
       </h3>
 
       {node.isTension && (
-        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg p-2 mb-3 text-xs flex items-start gap-1.5 font-medium">
-          <span>⚠️</span>
-          <span>Active Life Tension: {node.tensionHeadline || 'Requires attention'}</span>
+        <div className="bg-rose-500/10 border border-rose-500/25 text-rose-300 rounded-xl p-2.5 mb-3 text-xs flex items-start gap-2 font-mono">
+          <span className="text-rose-400">⚠️</span>
+          <span className="leading-tight">Tension: {node.tensionHeadline || 'Requires attention'}</span>
         </div>
       )}
       
       <div className="bg-white/5 rounded-xl p-3 border border-white/5 mb-3">
         {isLoading ? (
-          <div className="h-4 bg-white/10 rounded animate-pulse w-3/4"></div>
+          <div className="space-y-1.5 animate-pulse">
+            <div className="h-3.5 bg-white/10 rounded w-3/4"></div>
+            <div className="h-3.5 bg-white/10 rounded w-1/2"></div>
+          </div>
         ) : (
-          <p className="text-xs text-white/90 leading-relaxed font-sans">
+          <p className="text-xs text-white/80 leading-relaxed font-sans font-normal">
             {factLine}
           </p>
         )}
@@ -137,10 +148,10 @@ export default function NodeCard({ node, x, y, onClose, onViewProfile }: NodeCar
       {onViewProfile && (
         <button
           onClick={() => onViewProfile(node.id)}
-          className="w-full text-xs font-medium py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors flex items-center justify-center gap-1.5"
+          className="w-full text-xs font-mono font-medium py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white/90 hover:text-white transition-all flex items-center justify-center gap-2 border border-white/10 shadow-sm"
         >
-          <span>View Profile</span>
-          <span className="font-mono text-white/60">&rarr;</span>
+          <span>View Dossier</span>
+          <span className="text-cyan-400">&rarr;</span>
         </button>
       )}
     </div>
