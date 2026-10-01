@@ -64,10 +64,35 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   const fgRef = useRef<any>(null);
   const [graphData, setGraphData] = useState<{ nodes: Graph3DNode[]; links: Graph3DLink[] }>({ nodes: [], links: [] });
   const [selectedNode, setSelectedNode] = useState<Graph3DNode | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<Graph3DNode | null>(null);
   const [cardPos, setCardPos] = useState({ x: 0, y: 0 });
   const [threeLib, setThreeLib] = useState<typeof import('three') | null>(null);
   const [spriteTextLib, setSpriteTextLib] = useState<any>(null);
   const [mounted, setMounted] = useState(false);
+
+  // Active focus target for neural spotlight highlighting
+  const activeFocusNode = hoveredNode || selectedNode;
+
+  // Track connected neighbors and links for active focus spotlight
+  const connectedState = useMemo(() => {
+    if (!activeFocusNode) return { nodeIds: new Set<string>(), linkIds: new Set<any>() };
+    const nodeIds = new Set<string>([activeFocusNode.id]);
+    const linkIds = new Set<any>();
+
+    graphData.links.forEach((l: any) => {
+      const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+      const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+      if (srcId === activeFocusNode.id) {
+        nodeIds.add(tgtId);
+        linkIds.add(l);
+      } else if (tgtId === activeFocusNode.id) {
+        nodeIds.add(srcId);
+        linkIds.add(l);
+      }
+    });
+
+    return { nodeIds, linkIds };
+  }, [activeFocusNode, graphData.links]);
 
   // Dynamically load Three.js and SpriteText (avoid SSR issues)
   useEffect(() => {
@@ -342,6 +367,11 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const isDomainHub = Boolean(node.isDomainHub || (node as any).props?.is_domain_hub);
     const isCategory = Boolean(node.isCategory || (node as any).props?.is_category);
 
+    const isFocusActive = Boolean(activeFocusNode);
+    const isThisActiveNode = activeFocusNode?.id === node.id;
+    const isConnectedNeighbor = connectedState.nodeIds.has(node.id);
+    const isDimmed = isFocusActive && !isThisActiveNode && !isConnectedNeighbor;
+
     let colorHex = CATEGORY_COLORS[node.type] || CATEGORY_COLORS.other;
     if (isUser) colorHex = '#ffffff';
     else if (isDomainHub) colorHex = '#00f0ff'; // Cyber Cyan for Level 1 Domain Hubs
@@ -353,6 +383,10 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     else if (isDomainHub) baseRadius = 3.8;
     else if (isCategory) baseRadius = 2.8;
 
+    if (isThisActiveNode) {
+      baseRadius *= 1.2; // Subtle swelling on active focus
+    }
+
     // 1. Core sphere with specular gloss and emissive singularity
     const coreGeoKey = `core-${baseRadius}`;
     if (!geoCache.has(coreGeoKey)) {
@@ -361,9 +395,11 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const coreMat = new THREE.MeshStandardMaterial({
       color: isUser ? '#ffffff' : colorHex,
       emissive: isUser ? '#38bdf8' : colorHex,
-      emissiveIntensity: isUser ? 1.4 : (isDomainHub ? 0.95 : (isCategory ? 0.75 : 0.45)),
+      emissiveIntensity: isDimmed ? 0.08 : (isThisActiveNode ? 1.8 : (isUser ? 1.4 : (isDomainHub ? 0.95 : (isCategory ? 0.75 : 0.45)))),
       roughness: 0.1,
       metalness: 0.92,
+      transparent: isDimmed,
+      opacity: isDimmed ? 0.15 : 1.0,
     });
     const coreMesh = new THREE.Mesh(geoCache.get(coreGeoKey)!, coreMat);
     group.add(coreMesh);
@@ -377,7 +413,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const glowMat = new THREE.MeshBasicMaterial({
       color: isUser ? '#38bdf8' : colorHex,
       transparent: true,
-      opacity: isUser ? 0.38 : (isDomainHub ? 0.26 : (isCategory ? 0.18 : 0.1)),
+      opacity: isDimmed ? 0.02 : (isThisActiveNode ? 0.6 : (isUser ? 0.38 : (isDomainHub ? 0.26 : (isCategory ? 0.18 : 0.1)))),
       blending: THREE.AdditiveBlending,
       side: THREE.BackSide,
     });
@@ -394,7 +430,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
         color: '#38bdf8',
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: 0.7,
+        opacity: isDimmed ? 0.15 : 0.7,
         blending: THREE.AdditiveBlending,
       });
       const ringMesh = new THREE.Mesh(geoCache.get(ringGeoKey as any) as any, ringMat);
@@ -406,14 +442,14 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       if (!geoCache.has(outerGlowGeoKey)) {
         geoCache.set(outerGlowGeoKey, new THREE.SphereGeometry(baseRadius * 2.3, 16, 16));
       }
-      const outerGlowMat = new THREE.MeshBasicMaterial({
+      const outerCoronaMat = new THREE.MeshBasicMaterial({
         color: '#818cf8',
         transparent: true,
-        opacity: 0.12,
+        opacity: isDimmed ? 0.02 : 0.12,
         blending: THREE.AdditiveBlending,
         side: THREE.BackSide,
       });
-      group.add(new THREE.Mesh(geoCache.get(outerGlowGeoKey)!, outerGlowMat));
+      group.add(new THREE.Mesh(geoCache.get(outerGlowGeoKey)!, outerCoronaMat));
     }
 
     // 4. Tension additive shell
@@ -428,7 +464,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       const tensionMat = new THREE.MeshBasicMaterial({
         color: tensionColor,
         transparent: true,
-        opacity: 0.5,
+        opacity: isDimmed ? 0.1 : 0.5,
         blending: THREE.AdditiveBlending,
         side: THREE.BackSide,
       });
@@ -437,8 +473,12 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
 
     // 5. Clean, elegant typography (NO CLUNKY BOXES!)
     const sprite = new SpriteText(node.name || node.id);
-    sprite.color = isUser ? '#ffffff' : (isDomainHub ? '#38bdf8' : (isCategory ? '#c084fc' : 'rgba(255, 255, 255, 0.85)'));
-    sprite.textHeight = isUser ? 3.2 : (isDomainHub ? 2.4 : (isCategory ? 1.9 : 1.5));
+    sprite.color = isDimmed 
+      ? 'rgba(255, 255, 255, 0.15)'
+      : (isThisActiveNode 
+          ? '#00f0ff' 
+          : (isUser ? '#ffffff' : (isDomainHub ? '#38bdf8' : (isCategory ? '#c084fc' : 'rgba(255, 255, 255, 0.85)'))));
+    sprite.textHeight = (isThisActiveNode ? 1.2 : 1.0) * (isUser ? 3.2 : (isDomainHub ? 2.4 : (isCategory ? 1.9 : 1.5)));
     sprite.fontSize = 80;
     sprite.fontFace = 'JetBrains Mono, -apple-system, system-ui, sans-serif';
     sprite.backgroundColor = undefined; // PURE FLOATING TYPOGRAPHY - NO DARK BOX!
@@ -447,7 +487,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     group.add(sprite);
 
     return group;
-  }, [threeLib, spriteTextLib]);
+  }, [threeLib, spriteTextLib, activeFocusNode, connectedState]);
 
   // ---- Interactions ----
   const handleNodeClick = useCallback((node: any, event: MouseEvent) => {
@@ -464,31 +504,38 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     if (typeof document !== 'undefined') {
       document.body.style.cursor = node ? 'pointer' : 'default';
     }
+    setHoveredNode(node as Graph3DNode | null);
   }, []);
 
   const handleBackgroundClick = useCallback(() => {
     setSelectedNode(null);
+    setHoveredNode(null);
     // Resume auto-rotation
     const controls = fgRef.current?.controls?.();
     if (controls) controls.autoRotate = true;
   }, []);
 
-  // ---- Link styling (Neural Synaptic Filaments) ----
+  // ---- Link styling (Neural Synaptic Filaments with Active Spotlight Flare) ----
   const linkColor = useCallback((link: any) => {
     const srcId = typeof link.source === 'object' ? link.source.id : link.source;
     const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
-    if (selectedNode && (srcId === selectedNode.id || tgtId === selectedNode.id)) {
-      return 'rgba(56, 189, 248, 0.85)'; // Radiant cyber-cyan active energy beam
+    if (activeFocusNode) {
+      if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
+        return 'rgba(0, 240, 255, 0.95)'; // Radiant cyber-cyan active energy beam!
+      }
+      return 'rgba(255, 255, 255, 0.02)'; // Unfocused links fade away
     }
-    return 'rgba(148, 163, 184, 0.12)'; // Ethereal starlight filament
-  }, [selectedNode]);
+    return 'rgba(148, 163, 184, 0.14)'; // Ethereal starlight filament
+  }, [activeFocusNode]);
 
   const linkWidth = useCallback((link: any) => {
     const srcId = typeof link.source === 'object' ? link.source.id : link.source;
     const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
-    if (selectedNode && (srcId === selectedNode.id || tgtId === selectedNode.id)) return 1.8;
+    if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
+      return 2.2;
+    }
     return 0.4;
-  }, [selectedNode]);
+  }, [activeFocusNode]);
 
   // Map graph data for NodeCard compatibility  
   const activeNodeForCard = useMemo(() => {
@@ -524,10 +571,10 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
           linkWidth={linkWidth}
           linkColor={linkColor}
           linkOpacity={1}
-          linkDirectionalParticles={1}
-          linkDirectionalParticleWidth={1.4}
-          linkDirectionalParticleSpeed={0.005}
-          linkDirectionalParticleColor={() => '#38bdf8'}
+          linkDirectionalParticles={activeFocusNode ? 3 : 1}
+          linkDirectionalParticleWidth={activeFocusNode ? 1.8 : 1.2}
+          linkDirectionalParticleSpeed={activeFocusNode ? 0.008 : 0.004}
+          linkDirectionalParticleColor={() => '#00f0ff'}
           
           // Interactions
           onNodeClick={handleNodeClick}
