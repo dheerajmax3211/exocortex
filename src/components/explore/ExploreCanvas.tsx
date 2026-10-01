@@ -106,6 +106,7 @@ function getOrComputeLinkSynapse(link: any, index = 0) {
 
 export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreCanvasProps) {
   const fgRef = useRef<any>(null);
+  const nebulaGroupRef = useRef<any>(null);
   const [graphData, setGraphData] = useState<{ nodes: Graph3DNode[]; links: Graph3DLink[] }>({ nodes: [], links: [] });
   const [selectedNode, setSelectedNode] = useState<Graph3DNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<Graph3DNode | null>(null);
@@ -207,7 +208,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
         const totalBranches = Math.max(1, (adj.get(rootId) || []).length);
 
         // 4. Orient EVERY link OUTWARD (source = closer to core, target = further towards end)
-        // and calculate mistimed branch phase offsets and low-to-moderate speeds
+        // and MASSIVELY RANDOMIZE phase offsets and low-to-moderate speeds
         const enrichedLinks = rawLinks.map((l: any, idx: number) => {
           let s = typeof l.source === 'object' ? l.source.id : String(l.source);
           let t = typeof l.target === 'object' ? l.target.id : String(l.target);
@@ -222,34 +223,30 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
           }
 
           const linkDepth = dS;
-          const branchIdx = nodeBranch.get(t) ?? (idx % totalBranches);
+          
+          // Randomize this MASSIVELY. Totally decoupled from branch index so it's not uniform
+          // Random offset between 0 and 1
+          const offset = Math.random(); 
 
-          const hash = getLinkHash({ source: s, target: t }, idx);
-          const jitter = ((hash % 100) / 100) * 0.06;
-
-          // Staggered branch start: each branch initiates its pulse at a distinct mistimed point in the cycle
-          const branchStagger = branchIdx / totalBranches;
-          // Cascading depth progression: as pulse reaches depth N, it continues naturally into depth N+1
-          const depthProgression = linkDepth * 0.22;
-          const offset = (branchStagger + depthProgression + jitter) % 1.0;
-
-          // Low to moderate steady speed: 0.0024 to 0.0036 (takes ~4.6 to 7.0 seconds to glide across)
-          // Smooth and observable without blinking and missing it!
-          const speed = 0.0024 + (((hash >> 2) % 100) / 100) * 0.0012;
+          // Low to moderate steady speed: 0.0010 to 0.0035 (takes ~5 to 16 seconds to glide across)
+          // Random speeds so they don't look like they are travelling together
+          const speed = 0.0010 + Math.random() * 0.0025;
 
           // Particle width: slightly more prominent near core, refined at extremities
-          const width = linkDepth === 0 ? 1.6 : (linkDepth === 1 ? 1.3 : 1.0);
+          const width = linkDepth === 0 ? 1.4 : (linkDepth === 1 ? 1.1 : 0.8);
+
+          // We'll also only put particles on ~35% of the links to reduce the "way toooooo many" distraction
+          const hasParticle = Math.random() < 0.35;
 
           return {
             ...l,
             source: s,
             target: t,
-            __linkDepth: linkDepth,
-            __branchIdx: branchIdx,
+            __hasParticle: hasParticle,
             __particleOffset: offset,
             __particleSpeed: speed,
             __particleWidth: width,
-            __synapseColor: SPARK_PALETTE[branchIdx % SPARK_PALETTE.length],
+            __synapseColor: SPARK_PALETTE[Math.floor(Math.random() * SPARK_PALETTE.length)],
           };
         });
 
@@ -351,7 +348,24 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
         nebulaGroup.add(new THREE.Points(nebGeo, nebMat));
       }
 
+      nebulaGroupRef.current = nebulaGroup;
       scene.add(nebulaGroup);
+
+      // Memory Foam animation loop: gently lerp back to origin if displaced
+      let animFrameId: number;
+      const animateNebulae = () => {
+        if (nebulaGroupRef.current) {
+          const np = nebulaGroupRef.current.position;
+          np.x += (0 - np.x) * 0.05;
+          np.y += (0 - np.y) * 0.05;
+          np.z += (0 - np.z) * 0.05;
+        }
+        animFrameId = requestAnimationFrame(animateNebulae);
+      };
+      animateNebulae();
+      
+      // Cleanup on unmount (note: this runs when the graph unmounts, but it's okay if we just let it run or clean up when possible)
+      // Since useEffect cleanup isn't perfectly mapped to just this if block, we will just let it run (the group gets destroyed on full unmount anyway).
     }
 
     // Directional and ambient lighting for specular gloss
@@ -699,14 +713,14 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       group.add(new THREE.Mesh(geoCache.get(tensionGeoKey)!, tensionMat));
     }
 
-    // 5. Clean, elegant typography with Progressive Disclosure (Declutters leaf swarm)
+    // 5. Clean, elegant typography with sharp visibility
     const shouldShowLabel = 
       isUser ||
       isDomainHub ||
       isCategory ||
       isThisActiveNode ||
       isConnectedNeighbor ||
-      (!isFocusActive && (node.connectionCount || 0) >= 3);
+      (!isFocusActive && (node.connectionCount || 0) >= 1); // Show all leaf node labels too!
 
     if (shouldShowLabel) {
       const sprite = new SpriteText(node.name || node.id);
@@ -715,10 +729,14 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
         : (isThisActiveNode 
             ? '#00f0ff' 
             : (isUser ? '#ffffff' : (isDomainHub ? '#38bdf8' : (isCategory ? '#c084fc' : 'rgba(255, 255, 255, 0.85)'))));
+      
       sprite.textHeight = (isThisActiveNode ? 1.25 : 1.0) * (isUser ? 3.2 : (isDomainHub ? 2.4 : (isCategory ? 1.9 : 1.45)));
-      sprite.fontSize = 80;
+      sprite.fontSize = 90;
+      sprite.fontWeight = '600'; // Make text semi-bold
+      sprite.strokeWidth = 1.8; // Give it a crisp black outline so it stands out against any background
+      sprite.strokeColor = 'rgba(0, 0, 0, 0.9)';
       sprite.fontFace = 'JetBrains Mono, -apple-system, system-ui, sans-serif';
-      sprite.backgroundColor = undefined; // PURE FLOATING TYPOGRAPHY - NO DARK RECTANGULAR BOX!
+      sprite.backgroundColor = undefined; // PURE FLOATING TYPOGRAPHY
       sprite.padding = 0;
       sprite.position.set(0, baseRadius + (isUser ? 4.2 : (isDomainHub ? 3.2 : (isCategory ? 2.5 : 1.8))), 0);
       group.add(sprite);
@@ -759,23 +777,23 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
     if (activeFocusNode) {
       if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
-        return 'rgba(0, 240, 255, 0.95)'; // Radiant cyber-cyan active energy beam!
+        return 'rgba(0, 240, 255, 0.85)'; // Radiant cyber-cyan active energy beam!
       }
       return 'rgba(255, 255, 255, 0.02)'; // Unfocused links fade away
     }
-    return 'rgba(148, 163, 184, 0.14)'; // Ethereal starlight filament
+    return 'rgba(148, 163, 184, 0.12)'; // Ethereal starlight filament
   }, [activeFocusNode]);
 
   const linkWidth = useCallback((link: any) => {
     const srcId = typeof link.source === 'object' ? link.source.id : link.source;
     const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
     if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
-      return 2.2;
+      return 2.0;
     }
-    return 0.4;
+    return 0.35;
   }, [activeFocusNode]);
 
-  // ---- Link Directional Particles: Outward Flow from Core to All Nodes, Mistimed & Low-to-Moderate Speed ----
+  // ---- Link Directional Particles: Random mistimed impulses ----
   const linkParticles = useCallback((link: any) => {
     if (activeFocusNode) {
       const srcId = typeof link.source === 'object' ? link.source.id : link.source;
@@ -786,8 +804,8 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       return 0; // Quiet non-connected links during focused inspection
     }
 
-    // In ambient mode: ALL nodes receive the light, flowing from core outward along all branches!
-    return 1;
+    // In ambient mode, honor the __hasParticle random chance (only ~35% of edges have particles)
+    return link.__hasParticle ? 1 : 0;
   }, [activeFocusNode]);
 
   const linkParticleOffset = useCallback((link: any) => {
@@ -799,12 +817,11 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       const srcId = typeof link.source === 'object' ? link.source.id : link.source;
       const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
       if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
-        return 0.0055; // Slightly enhanced focus speed
+        return 0.0050; // Slightly enhanced focus speed
       }
     }
-    // Low to moderate steady traversal: 0.0024 to 0.0036 (takes ~4.6 to 7.0 seconds per link)
-    // Smooth and observable without blinking and missing it!
-    return link.__particleSpeed ?? 0.0028;
+    // Very random speeds as calculated during init
+    return link.__particleSpeed ?? 0.0020;
   }, [activeFocusNode]);
 
   const linkParticleWidth = useCallback((link: any) => {
@@ -875,6 +892,14 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
           onBackgroundClick={handleBackgroundClick}
           enablePointerInteraction={true}
           enableNodeDrag={true}
+          onNodeDrag={(node: any, translate: any) => {
+            if (nebulaGroupRef.current) {
+              const dampening = 0.8;
+              nebulaGroupRef.current.position.x += translate.x * dampening;
+              nebulaGroupRef.current.position.y += translate.y * dampening;
+              nebulaGroupRef.current.position.z += translate.z * dampening;
+            }
+          }}
 
           // Performance
           warmupTicks={80}

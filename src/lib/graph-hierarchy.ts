@@ -1,23 +1,18 @@
+import { getEmbedding } from './embeddings';
+
 /**
  * Multi-Tier Graph Hierarchy & Universal Anti-Bypass Engine
  * 
  * Guarantees pure hierarchical tree/DAG topology with arbitrary depth N >= 3:
  * Level 0: Root User (Me)
- *  └── Level 1: Domain Hubs (Photography, Media & Entertainment, Health & Fitness, Dating & Relationships...)
- *       └── Level 2: Category Nodes (Camera Equipment, Television & Series, Strength Training, Dating Platforms...)
- *            └── Level 3: Hardware / Series / Entities (Nikon Z50, HIMYM, Nymph, Bench Press...)
- *                 └── Level 4: Components / Lenses (Viltrox 35mm f/1.8...)
+ *  └── Level 1: Domain Hubs
+ *       └── Level 2: Category Nodes
+ *            └── Level 3: Entities
  * 
  * UNIVERSAL INVARIANTS:
- * 1. STRICT ZERO DANDELION / STAR SPOKES:
- *    Any entity nested under a category or intermediate parent is STRICTLY FORBIDDEN
- *    from having a direct edge to/from Root User (Me).
- *    User actions ("trying", "watched", "bought", "likes", "ate") are recorded as facts on the entity.
- * 2. NO DISCONNECTED ISLANDS:
- *    Every entity belongs to a domain/category tree rooted at 'Me'.
- * 3. SINGLE CANONICAL DOWNWARD DIRECTION:
- *    Hierarchical links strictly flow downward (Domain -> Category -> Entity -> Subcomponent).
- *    Reverse/cyclic edges (e.g. child -> parent) are collapsed into canonical downward edges.
+ * 1. STRICT ZERO DANDELION / STAR SPOKES
+ * 2. NO DISCONNECTED ISLANDS
+ * 3. SINGLE CANONICAL DOWNWARD DIRECTION
  */
 
 export interface RawEntity {
@@ -56,113 +51,113 @@ export interface ExistingCandidate {
   props?: Record<string, any>;
 }
 
-// Canonical Domain Hub Definitions with recognized aliases
 export const DOMAIN_HUB_DEFINITIONS = [
   {
     name: 'Photography',
     aliases: ['photography', 'photography & filmmaking', 'filmmaking', 'camera & optics', 'photo', 'optics'],
     summary: 'Photography, camera equipment, lighting setups, and filmmaking projects',
-    defaultRelation: 'passionate_about'
+    defaultRelation: 'passionate_about',
+    hub_id: 'hub_photography'
   },
   {
     name: 'Media & Entertainment',
     aliases: ['media & entertainment', 'media', 'entertainment', 'movies & shows', 'cinema', 'pop culture', 'gaming', 'audiobooks & literature', 'books', 'shows'],
     summary: 'Movies, television series, literature, audiobooks, and gaming',
-    defaultRelation: 'enjoys'
+    defaultRelation: 'enjoys',
+    hub_id: 'hub_media'
   },
   {
     name: 'Health & Fitness',
     aliases: ['health & fitness', 'fitness', 'gym & fitness', 'workouts', 'body & fitness', 'exercise', 'training', 'athletics', 'lifting', 'health'],
     summary: 'Strength workouts, gym routines, physique development, and health metrics',
-    defaultRelation: 'trains'
+    defaultRelation: 'trains',
+    hub_id: 'hub_fitness'
   },
   {
     name: 'Dating & Relationships',
     aliases: ['dating & relationships', 'dating', 'relationships', 'romance', 'matrimonial', 'dating platforms', 'personal connections'],
     summary: 'Dating platforms, romantic interests, social connections, and relationship goals',
-    defaultRelation: 'explores'
+    defaultRelation: 'explores',
+    hub_id: 'hub_dating'
   },
   {
     name: 'Career & Professional',
     aliases: ['career & professional', 'career', 'work', 'job', 'software engineering', 'professional', 'engineering', 'tech stack', 'computing'],
     summary: 'Professional career, employer, tech stack, software engineering, and skills',
-    defaultRelation: 'works_in'
+    defaultRelation: 'works_in',
+    hub_id: 'hub_career'
   },
   {
     name: 'Finance & Wealth',
     aliases: ['finance & wealth', 'finances', 'finance', 'wealth', 'money', 'investments', 'budget', 'portfolio', 'stocks', 'crypto', 'savings'],
     summary: 'Investments, mutual funds, personal budget, wealth targets, and debt management',
-    defaultRelation: 'manages'
+    defaultRelation: 'manages',
+    hub_id: 'hub_finance'
   },
   {
     name: 'Travel & Places',
     aliases: ['travel & places', 'travel', 'trips', 'places', 'geography', 'vacations', 'cities', 'destinations'],
     summary: 'Travel journeys, destinations, vacations, and geographic locations',
-    defaultRelation: 'travels_to'
+    defaultRelation: 'travels_to',
+    hub_id: 'hub_travel'
   },
   {
     name: 'Food Preferences',
     aliases: ['food preferences', 'food', 'diet', 'cuisine', 'meals', 'nutrition', 'dishes', 'comfort foods'],
     summary: 'South Indian cuisine staples, favorite dishes, and avoided foods',
-    defaultRelation: 'has_preference'
+    defaultRelation: 'has_preference',
+    hub_id: 'hub_food_prefs'
   },
   {
     name: 'International Relocation',
     aliases: ['international relocation', 'relocation', 'immigration', 'moving abroad', 'target countries'],
     summary: 'Target countries and global mobility opportunities for career expansion',
-    defaultRelation: 'aiming_for'
+    defaultRelation: 'aiming_for',
+    hub_id: 'hub_relocation'
   },
   {
     name: 'Mind & Philosophy',
     aliases: ['mind & philosophy', 'mindset', 'philosophy', 'self-reflection', 'personal growth', 'psychology'],
     summary: 'Life philosophy, mindset, personal reflections, and identity reset',
-    defaultRelation: 'reflected_on'
+    defaultRelation: 'reflected_on',
+    hub_id: 'hub_mind'
   }
 ];
 
 export const DOMAIN_HUBS = DOMAIN_HUB_DEFINITIONS.map(d => d.name);
 
-// Canonical Categories across all Domains
-export const CATEGORY_NAMES = [
-  // Photography
-  'Camera Equipment',
-  'Lighting Equipment',
-  'Creative Projects',
-  // Media
-  'Television & Series',
-  'Films & Cinema',
-  'Audiobooks & Literature',
-  'Gaming',
-  'Podcasts & Audio',
-  // Dating
-  'Dating Platforms',
-  'Personal Connections',
-  // Fitness
-  'Strength Training',
-  'Gyms & Facilities',
-  'Fitness Tracking',
-  'Sports & Athletics',
-  // Career & Tech
-  'Tech Stack & Skills',
-  'Computing Hardware',
-  'Colleagues & Network',
-  'Productivity Tools',
-  // Finance
-  'Investments & Assets',
-  'Debt & Loans',
-  'Budget & Spending',
-  // Travel
-  'Destinations & Cities',
-  'Trips & Vacations',
-  // Food
-  'Favorite Dishes',
-  'Avoided Foods',
-  'Restaurants & Cafes',
-  // Relocation
-  'Target Countries',
-  // Mind
-  'Self-Reflection & Goals'
+export const CATEGORY_DEFINITIONS = [
+  { name: 'Camera Equipment', domain: 'Photography', relation: 'equipment', summary: 'Cameras, bodies, lenses, optics, and accessories', cat_id: 'cat_camera_equip' },
+  { name: 'Lighting Equipment', domain: 'Photography', relation: 'equipment', summary: 'Studio strobes, continuous LED lights, and modifiers', cat_id: 'cat_lighting_equip' },
+  { name: 'Creative Projects', domain: 'Photography', relation: 'project', summary: 'Short films, video productions, and shoots', cat_id: 'cat_creative_proj' },
+  { name: 'Television & Series', domain: 'Media & Entertainment', relation: 'series', summary: 'TV shows, sitcoms, and series', cat_id: 'cat_tv_series' },
+  { name: 'Films & Cinema', domain: 'Media & Entertainment', relation: 'movie', summary: 'Feature films and cinema', cat_id: 'cat_films_cinema' },
+  { name: 'Audiobooks & Literature', domain: 'Media & Entertainment', relation: 'platform', summary: 'Audiobooks, podcasts, and reading platforms', cat_id: 'cat_audio_lit' },
+  { name: 'Gaming', domain: 'Media & Entertainment', relation: 'game', summary: 'Video games and mobile gaming', cat_id: 'cat_gaming' },
+  { name: 'Podcasts & Audio', domain: 'Media & Entertainment', relation: 'podcast', summary: 'Podcasts and audio discussions', cat_id: 'cat_podcasts' },
+  { name: 'Dating Platforms', domain: 'Dating & Relationships', relation: 'platform', summary: 'Dating apps and matrimonial discovery', cat_id: 'cat_dating_platforms' },
+  { name: 'Personal Connections', domain: 'Dating & Relationships', relation: 'connection', summary: 'Romantic interests and social dates', cat_id: 'cat_personal_connections' },
+  { name: 'Strength Training', domain: 'Health & Fitness', relation: 'exercise', summary: 'Barbell, dumbbell, calisthenics, and benchmark workouts', cat_id: 'cat_strength_training' },
+  { name: 'Gyms & Facilities', domain: 'Health & Fitness', relation: 'facility', summary: 'Gym memberships and fitness training facilities', cat_id: 'cat_gyms_facilities' },
+  { name: 'Fitness Tracking', domain: 'Health & Fitness', relation: 'tracker', summary: 'Health monitors, watches, and metric tracking', cat_id: 'cat_fitness_tracking' },
+  { name: 'Sports & Athletics', domain: 'Health & Fitness', relation: 'sport', summary: 'Sports and athletic activities', cat_id: 'cat_sports' },
+  { name: 'Tech Stack & Skills', domain: 'Career & Professional', relation: 'skill', summary: 'Software engineering skills and technologies', cat_id: 'cat_tech_stack' },
+  { name: 'Computing Hardware', domain: 'Career & Professional', relation: 'hardware', summary: 'Workstation peripherals, mechanical keyboards, laptops, and gadgets', cat_id: 'cat_computing_hw' },
+  { name: 'Colleagues & Network', domain: 'Career & Professional', relation: 'colleague', summary: 'Professional contacts and network', cat_id: 'cat_colleagues' },
+  { name: 'Productivity Tools', domain: 'Career & Professional', relation: 'tool', summary: 'Software tools for productivity', cat_id: 'cat_productivity' },
+  { name: 'Investments & Assets', domain: 'Finance & Wealth', relation: 'asset', summary: 'Mutual funds, index funds, REITs, bonds, and brokerage platforms', cat_id: 'cat_investments_assets' },
+  { name: 'Debt & Loans', domain: 'Finance & Wealth', relation: 'debt', summary: 'Loans and debt management', cat_id: 'cat_debt' },
+  { name: 'Budget & Spending', domain: 'Finance & Wealth', relation: 'budget', summary: 'Budget and spending categories', cat_id: 'cat_budget' },
+  { name: 'Destinations & Cities', domain: 'Travel & Places', relation: 'destination', summary: 'Travel destinations and cities', cat_id: 'cat_destinations' },
+  { name: 'Trips & Vacations', domain: 'Travel & Places', relation: 'trip', summary: 'Vacations and travel itineraries', cat_id: 'cat_trips' },
+  { name: 'Favorite Dishes', domain: 'Food Preferences', relation: 'favorite_dish', summary: 'Beloved comfort foods and staple South Indian dishes', cat_id: 'cat_fav_dishes' },
+  { name: 'Avoided Foods', domain: 'Food Preferences', relation: 'avoids', summary: 'Disliked vegetables and avoided ingredients', cat_id: 'cat_avoided_foods' },
+  { name: 'Restaurants & Cafes', domain: 'Food Preferences', relation: 'restaurant', summary: 'Dining out and restaurants', cat_id: 'cat_restaurants' },
+  { name: 'Target Countries', domain: 'International Relocation', relation: 'target_country', summary: 'Destination countries for relocation and career expansion', cat_id: 'cat_target_countries' },
+  { name: 'Self-Reflection & Goals', domain: 'Mind & Philosophy', relation: 'reflection', summary: 'Life philosophy, mindset, personal reflections, and identity reset', cat_id: 'cat_reflection' }
 ];
+
+export const CATEGORY_NAMES = CATEGORY_DEFINITIONS.map(c => c.name);
 
 export function isDomainHubName(name: string): boolean {
   const norm = name.toLowerCase().trim();
@@ -183,33 +178,25 @@ export function getCanonicalDomainHub(name: string): typeof DOMAIN_HUB_DEFINITIO
   );
 }
 
-// Comprehensive Semantic Regexes
-const LENS_REGEX = /\b(lens|kit lens|prime|zoom|nikkor|sigma|viltrox|tamron|\d+mm|f\/\d+(\.\d+)?)\b/i;
-const CAMERA_REGEX = /\b(nikon|canon|sony|fujifilm|lumix|camera|body|z50|z6|z7|z8|z9|a7|a6\d{3}|dslr|mirrorless)\b/i;
-const LIGHTING_REGEX = /\b(godox|lc500|sk400|light|lights|softbox|strobe|speedlight|flash|aputure|nanlite|reflector|tripod|diffuser|led panel)\b/i;
-const CREATIVE_PROJECT_REGEX = /\b(short-film|short film|shortfilm|film project|documentary|photo shoot|photoshoot)\b/i;
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
 
-const DATING_APP_REGEX = /\b(tinder|bumble|hinge|aisle|okcupid|match\.com|grindr|jeevansathi|shaadi|coffeemeetsbagel|nymph|feeld|pure|raya|badoo)\b/i;
-const TARGET_COUNTRY_REGEX = /\b(united states|usa|canada|australia|united kingdom|uk|singapore|germany|netherlands|ireland|new zealand|dubai|switzerland)\b/i;
-const FOOD_DISLIKES_REGEX = /\b(leafy greens|bitter gourd|brinjal|eggplant|tomato|okra|capsicum)\b/i;
-const FOOD_LIKES_REGEX = /\b(dosa|idli|peanut chutney|chutney|vada|sambar|biryani|pulao|roti|paneer)\b/i;
-
-const TV_SHOW_REGEX = /\b(how i met your mother|himym|breaking bad|game of thrones|got|better call saul|friends|office|the office|sitcom|series|episode|season)\b/i;
-const MOVIE_REGEX = /\b(catch me if you can|inception|interstellar|movie|film|cinema)\b/i;
-const GAME_REGEX = /\b(contest of champions|mcoc|game|gaming|steam|ps5|xbox|rpg|mmo)\b/i;
-
-const FITNESS_EXERCISE_REGEX = /\b(bench press|squat|squats|deadlift|bicep curl|curls|push-up|push-ups|pull-up|pull-ups|dumbbell|barbell|kettlebell|cindy|cardio|running|workout)\b/i;
-const FITNESS_GYM_REGEX = /\b(cult|cult\.fit|cult gym|gold's gym|gym|fitness center)\b/i;
-
-const TECH_HARDWARE_REGEX = /\b(keyboard|keychron|mouse|logitech|monitor|macbook|laptop|headphones|anc|bose|sony wh|airpods)\b/i;
-const FINANCE_ASSET_REGEX = /\b(mutual fund|etf|reit|bond|stocks|nifty|zerodha|groww|demat|sip|investing|investment|emi|loan|debt)\b/i;
-
-export function restructureHierarchicalExtraction(
+export async function restructureHierarchicalExtraction(
   entities: RawEntity[],
   edges: RawEdge[],
   facts: RawFact[],
   candidates: ExistingCandidate[] = []
-): { entities: RawEntity[]; edges: RawEdge[]; facts: RawFact[] } {
+): Promise<{ entities: RawEntity[]; edges: RawEdge[]; facts: RawFact[] }> {
   const newEntities: RawEntity[] = [...entities];
   let newEdges: RawEdge[] = [...edges];
 
@@ -301,317 +288,71 @@ export function restructureHierarchicalExtraction(
     }
   };
 
-  // =========================================================================
-  // 1. Photography Multi-Tier Hierarchy:
-  // Me -> Photography -> Camera Equipment -> Nikon Z50 -> Lenses
-  //                   -> Lighting Equipment -> Godox lights
-  //                   -> Creative Projects -> Short film
-  // =========================================================================
-  const cameraEntities = newEntities.filter(
-    e => CAMERA_REGEX.test(e.name) && !LENS_REGEX.test(e.name) && e.temp_id !== 'me'
-  );
-  const lensEntities = newEntities.filter(
-    e => LENS_REGEX.test(e.name) && e.temp_id !== 'me'
-  );
-  const lightingEntities = newEntities.filter(
-    e => LIGHTING_REGEX.test(e.name) && e.temp_id !== 'me'
-  );
-  const creativeEntities = newEntities.filter(
-    e => CREATIVE_PROJECT_REGEX.test(e.name) && e.temp_id !== 'me'
+  // Pre-compute embeddings for categories
+  const categoryEmbeddings = await Promise.all(
+    CATEGORY_DEFINITIONS.map(async cat => {
+      const emb = await getEmbedding(cat.name + " " + cat.summary);
+      return { cat, emb };
+    })
   );
 
-  if (cameraEntities.length > 0 || lensEntities.length > 0 || lightingEntities.length > 0 || creativeEntities.length > 0) {
-    const photoHub = getOrCreateNode('hub_photography', 'Photography', 'other', 'Photography, camera equipment, lighting setups, and filmmaking projects', { is_domain_hub: true, level: 1 });
-    addEdgeIfMissing('me', photoHub.temp_id, 'passionate_about');
+  // Filter out nodes that should not be dynamically classified
+  const unclassifiedEntities = newEntities.filter(e => 
+    e.temp_id !== 'me' && 
+    !isDomainHubName(e.name) && 
+    !isCategoryName(e.name) &&
+    !e.props?.is_domain_hub &&
+    !e.props?.is_category &&
+    e.type !== 'person' && // Keep people independent unless matched
+    e.type !== 'place' &&  // Geographic handled separately
+    e.type !== 'event'     // Events handled separately
+  );
 
-    if (cameraEntities.length > 0 || lensEntities.length > 0) {
-      const cameraCat = getOrCreateNode('cat_camera_equip', 'Camera Equipment', 'other', 'Cameras, bodies, optics, and accessories', { is_category: true, domain: 'Photography', level: 2 });
-      addEdgeIfMissing(photoHub.temp_id, cameraCat.temp_id, 'category');
-
-      let primaryCam = cameraEntities[0];
-      if (!primaryCam) {
-        const dbCam = candidates.find(c => CAMERA_REGEX.test(c.name) && !LENS_REGEX.test(c.name));
-        if (dbCam) {
-          primaryCam = getOrCreateNode(dbCam.id, dbCam.name, dbCam.type, dbCam.summary || '', dbCam.props || {});
-        }
-      }
-
-      for (const cam of cameraEntities) {
-        removeDirectMeEdge(cam.temp_id);
-        addEdgeIfMissing(cameraCat.temp_id, cam.temp_id, 'camera_body');
-      }
-
-      for (const lens of lensEntities) {
-        removeDirectMeEdge(lens.temp_id);
-        if (primaryCam) {
-          addEdgeIfMissing(primaryCam.temp_id, lens.temp_id, 'has_lens');
-        } else {
-          addEdgeIfMissing(cameraCat.temp_id, lens.temp_id, 'lens');
-        }
+  // Dynamically Classify Entities
+  for (const ent of unclassifiedEntities) {
+    const entText = `${ent.name} ${ent.summary || ''} ${ent.type}`;
+    const entEmb = await getEmbedding(entText);
+    
+    let bestCat = null;
+    let bestScore = -1;
+    
+    for (const { cat, emb } of categoryEmbeddings) {
+      const score = cosineSimilarity(entEmb, emb);
+      if (score > bestScore) {
+        bestScore = score;
+        bestCat = cat;
       }
     }
 
-    if (lightingEntities.length > 0) {
-      const lightCat = getOrCreateNode('cat_lighting_equip', 'Lighting Equipment', 'other', 'Studio strobes, continuous LED lights, and modifiers', { is_category: true, domain: 'Photography', level: 2 });
-      addEdgeIfMissing(photoHub.temp_id, lightCat.temp_id, 'category');
+    // Connect to best category if similarity is acceptable
+    if (bestCat && bestScore > 0.4) {
+      const domHubDef = DOMAIN_HUB_DEFINITIONS.find(d => d.name === bestCat.domain)!;
+      
+      const hubNode = getOrCreateNode(
+        domHubDef.hub_id, 
+        domHubDef.name, 
+        'other', 
+        domHubDef.summary, 
+        { is_domain_hub: true, level: 1 }
+      );
+      addEdgeIfMissing('me', hubNode.temp_id, domHubDef.defaultRelation);
 
-      for (const light of lightingEntities) {
-        removeDirectMeEdge(light.temp_id);
-        addEdgeIfMissing(lightCat.temp_id, light.temp_id, 'equipment');
-      }
-    }
+      const catNode = getOrCreateNode(
+        bestCat.cat_id, 
+        bestCat.name, 
+        'other', 
+        bestCat.summary, 
+        { is_category: true, domain: bestCat.domain, level: 2 }
+      );
+      addEdgeIfMissing(hubNode.temp_id, catNode.temp_id, 'category');
 
-    if (creativeEntities.length > 0) {
-      const creativeCat = getOrCreateNode('cat_creative_proj', 'Creative Projects', 'other', 'Short films, video productions, and shoots', { is_category: true, domain: 'Photography', level: 2 });
-      addEdgeIfMissing(photoHub.temp_id, creativeCat.temp_id, 'category');
-
-      for (const proj of creativeEntities) {
-        removeDirectMeEdge(proj.temp_id);
-        addEdgeIfMissing(creativeCat.temp_id, proj.temp_id, 'project');
-      }
+      removeDirectMeEdge(ent.temp_id);
+      addEdgeIfMissing(catNode.temp_id, ent.temp_id, bestCat.relation);
     }
   }
 
   // =========================================================================
-  // 2. Media & Entertainment Multi-Tier Hierarchy:
-  // Me -> Media & Entertainment -> Television & Series -> HIMYM
-  //                             -> Films & Cinema -> Movie
-  //                             -> Gaming -> Game
-  //                             -> Audiobooks & Literature -> Book/Platform
-  // =========================================================================
-  const showEntities = newEntities.filter(
-    e => (e.type === 'show' || TV_SHOW_REGEX.test(e.name)) && e.temp_id !== 'me'
-  );
-  const movieEntities = newEntities.filter(
-    e => (e.type === 'movie' || MOVIE_REGEX.test(e.name)) && e.temp_id !== 'me'
-  );
-  const audioEntities = newEntities.filter(
-    e => (e.name.toLowerCase() === 'audible' || e.type === 'book') && e.temp_id !== 'me'
-  );
-  const gameEntities = newEntities.filter(
-    e => (GAME_REGEX.test(e.name) || e.name.toLowerCase().includes('contest of champions') || e.name.toLowerCase() === 'mcoc') && e.temp_id !== 'me'
-  );
-
-  if (showEntities.length > 0 || movieEntities.length > 0 || audioEntities.length > 0 || gameEntities.length > 0) {
-    const mediaHub = getOrCreateNode('hub_media', 'Media & Entertainment', 'other', 'Movies, television series, literature, audiobooks, and gaming', { is_domain_hub: true, level: 1 });
-    addEdgeIfMissing('me', mediaHub.temp_id, 'enjoys');
-
-    if (showEntities.length > 0) {
-      const tvCat = getOrCreateNode('cat_tv_series', 'Television & Series', 'other', 'TV shows, sitcoms, and series', { is_category: true, domain: 'Media & Entertainment', level: 2 });
-      addEdgeIfMissing(mediaHub.temp_id, tvCat.temp_id, 'category');
-      for (const show of showEntities) {
-        removeDirectMeEdge(show.temp_id);
-        addEdgeIfMissing(tvCat.temp_id, show.temp_id, 'series');
-      }
-    }
-
-    if (movieEntities.length > 0) {
-      const filmCat = getOrCreateNode('cat_films_cinema', 'Films & Cinema', 'other', 'Feature films and cinema', { is_category: true, domain: 'Media & Entertainment', level: 2 });
-      addEdgeIfMissing(mediaHub.temp_id, filmCat.temp_id, 'category');
-      for (const movie of movieEntities) {
-        removeDirectMeEdge(movie.temp_id);
-        addEdgeIfMissing(filmCat.temp_id, movie.temp_id, 'movie');
-      }
-    }
-
-    if (audioEntities.length > 0) {
-      const audioCat = getOrCreateNode('cat_audio_lit', 'Audiobooks & Literature', 'other', 'Audiobooks, podcasts, and reading platforms', { is_category: true, domain: 'Media & Entertainment', level: 2 });
-      addEdgeIfMissing(mediaHub.temp_id, audioCat.temp_id, 'category');
-      for (const aud of audioEntities) {
-        removeDirectMeEdge(aud.temp_id);
-        addEdgeIfMissing(audioCat.temp_id, aud.temp_id, 'platform');
-      }
-    }
-
-    if (gameEntities.length > 0) {
-      const gamingCat = getOrCreateNode('cat_gaming', 'Gaming', 'other', 'Video games and mobile gaming', { is_category: true, domain: 'Media & Entertainment', level: 2 });
-      addEdgeIfMissing(mediaHub.temp_id, gamingCat.temp_id, 'category');
-      for (const game of gameEntities) {
-        removeDirectMeEdge(game.temp_id);
-        addEdgeIfMissing(gamingCat.temp_id, game.temp_id, 'game');
-      }
-    }
-  }
-
-  // =========================================================================
-  // 3. Health & Fitness Multi-Tier Hierarchy:
-  // Me -> Health & Fitness -> Strength Training -> Bench Press, Squats, Cindy
-  //                        -> Gyms & Facilities -> Cult Gym
-  // =========================================================================
-  const exerciseEntities = newEntities.filter(
-    e => (FITNESS_EXERCISE_REGEX.test(e.name) || e.name.toLowerCase() === 'cindy') && e.temp_id !== 'me'
-  );
-  const gymEntities = newEntities.filter(
-    e => FITNESS_GYM_REGEX.test(e.name) && e.temp_id !== 'me'
-  );
-
-  if (exerciseEntities.length > 0 || gymEntities.length > 0) {
-    const fitnessHub = getOrCreateNode('hub_fitness', 'Health & Fitness', 'other', 'Strength workouts, gym routines, physique development, and health metrics', { is_domain_hub: true, level: 1 });
-    addEdgeIfMissing('me', fitnessHub.temp_id, 'trains');
-
-    if (exerciseEntities.length > 0) {
-      const strengthCat = getOrCreateNode('cat_strength_training', 'Strength Training', 'other', 'Barbell, dumbbell, calisthenics, and benchmark workouts', { is_category: true, domain: 'Health & Fitness', level: 2 });
-      addEdgeIfMissing(fitnessHub.temp_id, strengthCat.temp_id, 'category');
-
-      for (const ex of exerciseEntities) {
-        removeDirectMeEdge(ex.temp_id);
-        addEdgeIfMissing(strengthCat.temp_id, ex.temp_id, 'exercise');
-      }
-    }
-
-    if (gymEntities.length > 0) {
-      const gymCat = getOrCreateNode('cat_gyms_facilities', 'Gyms & Facilities', 'other', 'Gym memberships and fitness training facilities', { is_category: true, domain: 'Health & Fitness', level: 2 });
-      addEdgeIfMissing(fitnessHub.temp_id, gymCat.temp_id, 'category');
-
-      for (const gym of gymEntities) {
-        removeDirectMeEdge(gym.temp_id);
-        addEdgeIfMissing(gymCat.temp_id, gym.temp_id, 'facility');
-      }
-    }
-  }
-
-  // =========================================================================
-  // 4. Dating & Relationships Multi-Tier Hierarchy:
-  // Me -> Dating & Relationships -> Dating Platforms -> Nymph, Tinder, Bumble...
-  //                              -> Personal Connections -> Cindy
-  // =========================================================================
-  const datingAppEntities = newEntities.filter(
-    e => (DATING_APP_REGEX.test(e.name) || 
-          e.props?.app_type?.includes('dating') || 
-          e.summary?.toLowerCase().includes('dating') ||
-          newEdges.some(ed => ed.dst_temp_id === e.temp_id && (ed.relation === 'platform' || ed.relation.includes('dating')))) &&
-          e.temp_id !== 'me'
-  );
-  const prospectEntity = newEntities.find(
-    e => e.name.toLowerCase() === 'cindy' && !e.props?.is_workout && e.temp_id !== 'me'
-  );
-
-  if (datingAppEntities.length > 0 || prospectEntity) {
-    const datingHub = getOrCreateNode('hub_dating', 'Dating & Relationships', 'other', 'Dating platforms, romantic interests, and relationship exploration', { is_domain_hub: true, level: 1 });
-    addEdgeIfMissing('me', datingHub.temp_id, 'explores');
-
-    if (datingAppEntities.length > 0) {
-      const datingPlatformsCat = getOrCreateNode('cat_dating_platforms', 'Dating Platforms', 'other', 'Dating apps and matrimonial discovery', { is_category: true, domain: 'Dating & Relationships', level: 2 });
-      addEdgeIfMissing(datingHub.temp_id, datingPlatformsCat.temp_id, 'category');
-
-      for (const app of datingAppEntities) {
-        removeDirectMeEdge(app.temp_id);
-        addEdgeIfMissing(datingPlatformsCat.temp_id, app.temp_id, 'platform');
-      }
-    }
-
-    if (prospectEntity) {
-      const connectionsCat = getOrCreateNode('cat_personal_connections', 'Personal Connections', 'other', 'Romantic interests and social dates', { is_category: true, domain: 'Dating & Relationships', level: 2 });
-      addEdgeIfMissing(datingHub.temp_id, connectionsCat.temp_id, 'category');
-
-      removeDirectMeEdge(prospectEntity.temp_id);
-      addEdgeIfMissing(connectionsCat.temp_id, prospectEntity.temp_id, 'connection');
-    }
-  }
-
-  // =========================================================================
-  // 5. Tech & Workstations / Career Multi-Tier Hierarchy:
-  // Me -> Career & Professional -> Computing Hardware -> Keychron K2, MacBook
-  // =========================================================================
-  const techHardwareEntities = newEntities.filter(
-    e => TECH_HARDWARE_REGEX.test(e.name) && e.temp_id !== 'me'
-  );
-
-  if (techHardwareEntities.length > 0) {
-    const careerHub = getOrCreateNode('hub_career', 'Career & Professional', 'other', 'Professional career, employer, tech stack, and workstations', { is_domain_hub: true, level: 1 });
-    addEdgeIfMissing('me', careerHub.temp_id, 'works_in');
-
-    const hardwareCat = getOrCreateNode('cat_computing_hw', 'Computing Hardware', 'other', 'Workstation peripherals, mechanical keyboards, laptops, and gadgets', { is_category: true, domain: 'Career & Professional', level: 2 });
-    addEdgeIfMissing(careerHub.temp_id, hardwareCat.temp_id, 'category');
-
-    for (const hw of techHardwareEntities) {
-      removeDirectMeEdge(hw.temp_id);
-      addEdgeIfMissing(hardwareCat.temp_id, hw.temp_id, 'hardware');
-    }
-  }
-
-  // =========================================================================
-  // 6. Finance & Wealth Multi-Tier Hierarchy:
-  // Me -> Finance & Wealth -> Investments & Assets -> Mutual Funds, Stocks
-  // =========================================================================
-  const financeEntities = newEntities.filter(
-    e => FINANCE_ASSET_REGEX.test(e.name) && e.temp_id !== 'me'
-  );
-
-  if (financeEntities.length > 0) {
-    const finHub = getOrCreateNode('hub_finance', 'Finance & Wealth', 'other', 'Investments, mutual funds, personal budget, and wealth targets', { is_domain_hub: true, level: 1 });
-    addEdgeIfMissing('me', finHub.temp_id, 'manages');
-
-    const assetCat = getOrCreateNode('cat_investments_assets', 'Investments & Assets', 'other', 'Mutual funds, index funds, REITs, bonds, and brokerage platforms', { is_category: true, domain: 'Finance & Wealth', level: 2 });
-    addEdgeIfMissing(finHub.temp_id, assetCat.temp_id, 'category');
-
-    for (const fin of financeEntities) {
-      removeDirectMeEdge(fin.temp_id);
-      addEdgeIfMissing(assetCat.temp_id, fin.temp_id, 'asset');
-    }
-  }
-
-  // =========================================================================
-  // 7. International Relocation Multi-Tier Hierarchy:
-  // Me -> International Relocation -> Target Countries -> US, Canada...
-  // =========================================================================
-  const countryEntities = newEntities.filter(
-    e => TARGET_COUNTRY_REGEX.test(e.name) && e.temp_id !== 'me'
-  );
-
-  if (countryEntities.length > 0) {
-    const relocHub = getOrCreateNode('hub_relocation', 'International Relocation', 'other', 'Target countries and global mobility opportunities', { is_domain_hub: true, level: 1 });
-    addEdgeIfMissing('me', relocHub.temp_id, 'aiming_for');
-
-    const targetCountriesCat = getOrCreateNode('cat_target_countries', 'Target Countries', 'other', 'Destination countries for relocation and career expansion', { is_category: true, domain: 'International Relocation', level: 2 });
-    addEdgeIfMissing(relocHub.temp_id, targetCountriesCat.temp_id, 'category');
-
-    for (const country of countryEntities) {
-      removeDirectMeEdge(country.temp_id);
-      addEdgeIfMissing(targetCountriesCat.temp_id, country.temp_id, 'target_country');
-    }
-  }
-
-  // =========================================================================
-  // 8. Food & Dietary Preferences Multi-Tier Hierarchy:
-  // Me -> Food Preferences -> Favorite Dishes -> Dosa, Idli...
-  //                        -> Avoided Foods -> Bitter gourd...
-  // =========================================================================
-  const favFoodEntities = newEntities.filter(
-    e => (e.type === 'dish' || FOOD_LIKES_REGEX.test(e.name)) && !FOOD_DISLIKES_REGEX.test(e.name) && e.temp_id !== 'me'
-  );
-  const avoidFoodEntities = newEntities.filter(
-    e => FOOD_DISLIKES_REGEX.test(e.name) && e.temp_id !== 'me'
-  );
-
-  if (favFoodEntities.length > 0 || avoidFoodEntities.length > 0) {
-    const foodHub = getOrCreateNode('hub_food_prefs', 'Food Preferences', 'other', 'South Indian cuisine staples, favorite comfort foods, and avoided foods', { is_domain_hub: true, level: 1 });
-    addEdgeIfMissing('me', foodHub.temp_id, 'has_preference');
-
-    if (favFoodEntities.length > 0) {
-      const favCat = getOrCreateNode('cat_fav_dishes', 'Favorite Dishes', 'other', 'Beloved comfort foods and staple South Indian dishes', { is_category: true, domain: 'Food Preferences', level: 2 });
-      addEdgeIfMissing(foodHub.temp_id, favCat.temp_id, 'category');
-
-      for (const food of favFoodEntities) {
-        removeDirectMeEdge(food.temp_id);
-        addEdgeIfMissing(favCat.temp_id, food.temp_id, 'favorite_dish');
-      }
-    }
-
-    if (avoidFoodEntities.length > 0) {
-      const avoidCat = getOrCreateNode('cat_avoided_foods', 'Avoided Foods', 'other', 'Disliked vegetables and avoided ingredients', { is_category: true, domain: 'Food Preferences', level: 2 });
-      addEdgeIfMissing(foodHub.temp_id, avoidCat.temp_id, 'category');
-
-      for (const food of avoidFoodEntities) {
-        removeDirectMeEdge(food.temp_id);
-        addEdgeIfMissing(avoidCat.temp_id, food.temp_id, 'avoids');
-      }
-    }
-  }
-
-  // =========================================================================
-  // 9. Geographic Hierarchy:
-  // Karnataka -> Bangalore, Mysore
+  // Geographic Hierarchy (Keep)
   // =========================================================================
   const karnataka = newEntities.find(e => e.name.toLowerCase() === 'karnataka');
   const bangalore = newEntities.find(e => e.name.toLowerCase() === 'bangalore' || e.name.toLowerCase() === 'bengaluru');
@@ -628,9 +369,7 @@ export function restructureHierarchicalExtraction(
   }
 
   // =========================================================================
-  // 10. UNIVERSAL TRANSITIVE BYPASS PRUNER (ZERO DANDELION / STAR GUARANTEE)
-  // Any entity that has a parent in the category, hardware, or intermediate hierarchy
-  // is STRICTLY FORBIDDEN from having a direct edge to/from Root User (Me).
+  // UNIVERSAL TRANSITIVE BYPASS PRUNER (ZERO DANDELION / STAR GUARANTEE)
   // =========================================================================
   const domainHubIds = new Set<string>();
   const categoryNodeIds = new Set<string>();
@@ -653,7 +392,6 @@ export function restructureHierarchicalExtraction(
     }
   }
 
-  // Identify all entities that have an incoming edge from a non-'me' node
   const entitiesWithHierarchyParent = new Set<string>();
   for (const edge of newEdges) {
     const s = canonicalIdMap.get(edge.src_temp_id) || edge.src_temp_id;
@@ -663,19 +401,12 @@ export function restructureHierarchicalExtraction(
     }
   }
 
-  // Entities permitted to connect directly to Root User (Me):
   const isPermittedDirectAnchor = (ent: RawEntity): boolean => {
-    // 1. Domain Hubs
     if (domainHubIds.has(ent.temp_id) || isDomainHubName(ent.name)) return true;
-    // 2. Direct family members
     if (ent.type === 'person' && /parents|mother|father|mom|dad|wife|husband|brother|sister/i.test(ent.name)) return true;
-    // 3. Primary employer
     if (ent.type === 'org' && /neustar|transunion/i.test(ent.name)) return true;
-    // 4. Primary current residence or state of origin
     if (ent.type === 'place' && /bangalore|bengaluru|karnataka/i.test(ent.name)) return true;
-    // 5. Direct autobiographical life events
     if (ent.type === 'event' && /trip|vacation|wedding|graduation|birth/i.test(ent.name)) return true;
-    // 6. Direct psychological mind state
     if (ent.name.toLowerCase().includes('reflection') || ent.name.toLowerCase().includes('reset')) return true;
     return false;
   };
@@ -691,9 +422,7 @@ export function restructureHierarchicalExtraction(
       const targetTempId = s === 'me' ? d : s;
       const targetEntity = newEntities.find(e => e.temp_id === targetTempId);
 
-      // If the target is nested under a parent, or is a leaf item not in permitted anchors:
       if (targetEntity && (entitiesWithHierarchyParent.has(targetTempId) || !isPermittedDirectAnchor(targetEntity))) {
-        // Preserve user action as a discrete fact on the entity
         if (edge.relation && !['explores', 'passionate_about', 'aiming_for', 'has_preference', 'enjoys', 'trains', 'works_in', 'manages', 'travels_to', 'reflected_on'].includes(edge.relation)) {
           const alreadyHasStatus = facts.some(f => f.entity_temp_id === targetTempId && (f.key === 'status' || f.key === 'user_action'));
           if (!alreadyHasStatus) {
@@ -704,14 +433,10 @@ export function restructureHierarchicalExtraction(
             });
           }
         }
-        // PRUNE THE BYPASS SPOKE!
         continue;
       }
     }
 
-    // PRUNE LEVEL 1 (DOMAIN HUB) TO LEVEL 3 (LEAF) BYPASS EDGES:
-    // If an edge connects a Domain Hub to a leaf entity, but that leaf entity
-    // already has a Category parent, PRUNE the direct Domain Hub shortcut.
     const isDomainHubEdge = (domainHubIds.has(s) && !categoryNodeIds.has(d)) || 
                             (domainHubIds.has(d) && !categoryNodeIds.has(s));
 
@@ -725,12 +450,10 @@ export function restructureHierarchicalExtraction(
         }
       );
       if (hasCategoryParent) {
-        // Prune the Domain Hub -> Leaf shortcut!
         continue;
       }
     }
 
-    // Prune reverse 'part_of' or 'involves' edges if a canonical downward edge exists
     if (edge.relation === 'part_of') {
       const hasDownward = newEdges.some(
         e => {
@@ -750,14 +473,11 @@ export function restructureHierarchicalExtraction(
   }
 
   // =========================================================================
-  // 11. CANONICAL EDGE PAIR DEDUPLICATION & DIRECTED HIERARCHY
-  // Enforce single downward edge (Domain -> Category -> Entity -> Subcomponent)
-  // Drop redundant reverse edges (e.g. Item --part_of--> Category when Category --equipment--> Item exists)
+  // CANONICAL EDGE PAIR DEDUPLICATION & DIRECTED HIERARCHY
   // =========================================================================
   const canonicalEdges: RawEdge[] = [];
   const edgePairMap = new Map<string, RawEdge>();
 
-  // High-priority downward hierarchical relations
   const canonicalRelations = [
     'category',
     'platform',
@@ -778,7 +498,19 @@ export function restructureHierarchicalExtraction(
     'connection',
     'contains_city',
     'includes',
-    'contains'
+    'contains',
+    'podcast',
+    'tracker',
+    'sport',
+    'skill',
+    'colleague',
+    'tool',
+    'debt',
+    'budget',
+    'destination',
+    'trip',
+    'restaurant',
+    'reflection'
   ];
 
   for (const edge of finalEdges) {
@@ -793,7 +525,6 @@ export function restructureHierarchicalExtraction(
       edgePairMap.set(pairKey, edge);
       canonicalEdges.push(edge);
     } else {
-      // If the new edge has a canonical downward relation and the existing does not, swap!
       if (!canonicalRelations.includes(existing.relation) && canonicalRelations.includes(edge.relation)) {
         const idx = canonicalEdges.indexOf(existing);
         if (idx >= 0) canonicalEdges[idx] = edge;
@@ -803,8 +534,7 @@ export function restructureHierarchicalExtraction(
   }
 
   // =========================================================================
-  // 12. UNIVERSAL ROOT ATTACHMENT GUARANTEE (NO DISCONNECTED ISLANDS)
-  // Every domain hub and top-level anchor in the extracted graph MUST connect to 'Me'.
+  // UNIVERSAL ROOT ATTACHMENT GUARANTEE
   // =========================================================================
   for (const ent of newEntities) {
     if (ent.temp_id === 'me') continue;
@@ -826,7 +556,6 @@ export function restructureHierarchicalExtraction(
     }
   }
 
-  // Clean up any unlinked placeholder entities (e.g. generic 'Exercises' if shadowed)
   const connectedNodeIds = new Set<string>();
   for (const edge of canonicalEdges) {
     connectedNodeIds.add(edge.src_temp_id);

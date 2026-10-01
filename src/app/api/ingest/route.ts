@@ -395,7 +395,7 @@ If the input ONLY contains biographical attributes with no real-world entities, 
         }
 
         const { restructureHierarchicalExtraction } = await import('@/lib/graph-hierarchy');
-        const hierarchicalResult = restructureHierarchicalExtraction(
+        const hierarchicalResult = await restructureHierarchicalExtraction(
           Array.from(mergedEntities.values()),
           uniqueEdges,
           uniqueFacts,
