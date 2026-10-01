@@ -72,6 +72,12 @@ function getLinkHash(link: any, index = 0): number {
   return Math.abs(hash);
 }
 
+function getLinkId(link: any): string {
+  const src = typeof link.source === 'object' ? link.source.id : String(link.source || '');
+  const tgt = typeof link.target === 'object' ? link.target.id : String(link.target || '');
+  return `${src}->${tgt}`;
+}
+
 const SPARK_PALETTE = [
   '#00f0ff', // Cyber Cyan
   '#38bdf8', // Sky Azure
@@ -88,19 +94,12 @@ function getOrComputeLinkSynapse(link: any, index = 0) {
   }
   const hash = getLinkHash(link, index);
   const rSpeed = ((hash * 48271) % 2147483647) / 2147483647;
-  const rCount = ((hash * 16807 + 1013904223) % 2147483647) / 2147483647;
   const rWidth = ((hash * 69069 + 1) % 2147483647) / 2147483647;
   const rColor = ((hash * 134775813 + 1) % 2147483647) / 2147483647;
 
-  // Calibrate speed: gentle, calming pace (0.0010 to 0.0065) with natural organic variance
-  link.__synapseSpeed = 0.0010 + rSpeed * 0.0055;
-  
-  // Drastically reduced particle count (serene, distraction-free):
-  // 88% of links have ZERO particles (silent, clean resting pathways)
-  // Only ~12% have a single subtle spark drifting through
-  link.__synapseParticles = rCount > 0.88 ? 1 : 0;
-  link.__synapseConnectedParticles = 1; // Exactly 1 clean pulse per connected link on focus
-  link.__synapseWidth = 0.75 + rWidth * 0.55; // 0.75px to 1.3px subtle, delicate spark
+  // Calibrate speed: smooth traversal taking ~2.4 - 3.2s per link
+  link.__synapseSpeed = 0.0042 + rSpeed * 0.0028;
+  link.__synapseWidth = 0.9 + rWidth * 0.5; // 0.9px to 1.4px subtle spark
   link.__synapseColor = SPARK_PALETTE[Math.floor(rColor * SPARK_PALETTE.length)];
   return link;
 }
@@ -114,6 +113,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   const [threeLib, setThreeLib] = useState<typeof import('three') | null>(null);
   const [spriteTextLib, setSpriteTextLib] = useState<any>(null);
   const [mounted, setMounted] = useState(false);
+  const [activeFiringKeys, setActiveFiringKeys] = useState<Set<string>>(new Set());
 
   // Active focus target for neural spotlight highlighting
   const activeFocusNode = hoveredNode || selectedNode;
@@ -170,6 +170,44 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     };
     fetchGraph();
   }, []);
+
+  // Dynamic Synaptic Wanderer: systematically migrates light pulses across DIFFERENT branches
+  useEffect(() => {
+    if (graphData.links.length === 0 || activeFocusNode) return;
+
+    const pickDiverseSynapses = () => {
+      const allLinks = graphData.links;
+      if (allLinks.length === 0) return;
+
+      // Group links by their source entity to guarantee branch diversity
+      const branchBuckets = new Map<string, any[]>();
+      allLinks.forEach((l: any) => {
+        const srcId = typeof l.source === 'object' ? l.source.id : String(l.source);
+        if (!branchBuckets.has(srcId)) branchBuckets.set(srcId, []);
+        branchBuckets.get(srcId)!.push(l);
+      });
+
+      const bucketKeys = Array.from(branchBuckets.keys()).sort(() => Math.random() - 0.5);
+      const chosen = new Set<string>();
+
+      // Select 3 to 4 links from strictly distinct branch buckets
+      const countToPick = Math.min(4, bucketKeys.length);
+      for (let i = 0; i < countToPick; i++) {
+        const bucket = branchBuckets.get(bucketKeys[i])!;
+        const randomLink = bucket[Math.floor(Math.random() * bucket.length)];
+        chosen.add(getLinkId(randomLink));
+      }
+
+      setActiveFiringKeys(chosen);
+    };
+
+    // Initial diverse pick
+    pickDiverseSynapses();
+
+    // Migrate to brand new diverse branches every 2.8 seconds
+    const interval = setInterval(pickDiverseSynapses, 2800);
+    return () => clearInterval(interval);
+  }, [graphData.links, activeFocusNode]);
 
   // Configure physics, ambient starfield, and controls after graph mounts
   useEffect(() => {
@@ -682,11 +720,10 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     return 0.4;
   }, [activeFocusNode]);
 
-  // ---- Link Directional Particles (Calm, Serene Organic Synaptic Impulses) ----
+  // ---- Link Directional Particles (Dynamic Cross-Branch Neural Firings) ----
   const linkParticles = useCallback((link: any) => {
-    const l = getOrComputeLinkSynapse(link);
-    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
-    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+    const srcId = typeof link.source === 'object' ? link.source.id : link.source;
+    const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
 
     if (activeFocusNode) {
       if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
@@ -697,9 +734,10 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       return 0;
     }
 
-    // In ambient idle mode: 88% of links are silent (0 particles). Only ~12% carry 1 solitary spark.
-    return l.__synapseParticles ?? 0;
-  }, [activeFocusNode]);
+    // In ambient idle mode: only links chosen in the current multi-branch wave fire
+    const key = getLinkId(link);
+    return activeFiringKeys.has(key) ? 1 : 0;
+  }, [activeFocusNode, activeFiringKeys]);
 
   const linkParticleSpeed = useCallback((link: any) => {
     const l = getOrComputeLinkSynapse(link);
