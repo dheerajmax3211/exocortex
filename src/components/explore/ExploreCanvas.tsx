@@ -58,7 +58,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 // Geometry cache for performance (shared across all nodes)
-const geoCache = new Map<string, SphereGeometry>();
+const geoCache = new Map<string, any>();
 
 export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreCanvasProps) {
   const fgRef = useRef<any>(null);
@@ -143,16 +143,16 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       controls.maxDistance = 600;
     }
 
-    // Add ambient cosmic starfield to Three.js scene for depth & parallax
+    // Add ambient cosmic starfield and volumetric nebulae to Three.js scene
     const scene = fg.scene?.();
     if (scene && !scene.getObjectByName('ambient-cosmic-starfield')) {
-      const starCount = 1000;
+      const starCount = 1200;
       const starGeometry = new THREE.BufferGeometry();
       const starPositions = new Float32Array(starCount * 3);
       const starColors = new Float32Array(starCount * 3);
 
       for (let i = 0; i < starCount; i++) {
-        const r = 220 + Math.random() * 480;
+        const r = 220 + Math.random() * 520;
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
 
@@ -180,6 +180,39 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       const starfield = new THREE.Points(starGeometry, starMaterial);
       starfield.name = 'ambient-cosmic-starfield';
       scene.add(starfield);
+
+      // Add Volumetric Cognitive Nebulae (Soft atmospheric colored clouds)
+      const nebulaGroup = new THREE.Group();
+      nebulaGroup.name = 'cognitive-nebulae';
+      
+      const nebulaeCenters = [
+        { x: -90, y: 50, z: -60, color: 0x00f0ff, count: 180, spread: 55, size: 3.5, opacity: 0.18 }, // Cyber Cyan Lobe
+        { x: 100, y: -40, z: -50, color: 0x818cf8, count: 180, spread: 60, size: 3.8, opacity: 0.16 }, // Indigo Lobe
+        { x: -60, y: -80, z: 40, color: 0x10b981, count: 140, spread: 45, size: 3.2, opacity: 0.14 }, // Emerald Lobe
+        { x: 80, y: 70, z: 50, color: 0xf472b6, count: 140, spread: 50, size: 3.4, opacity: 0.15 }, // Rose Quartz Lobe
+      ];
+
+      for (const neb of nebulaeCenters) {
+        const nebGeo = new THREE.BufferGeometry();
+        const nebPos = new Float32Array(neb.count * 3);
+        for (let j = 0; j < neb.count; j++) {
+          nebPos[j * 3] = neb.x + (Math.random() - 0.5) * neb.spread * 2;
+          nebPos[j * 3 + 1] = neb.y + (Math.random() - 0.5) * neb.spread * 2;
+          nebPos[j * 3 + 2] = neb.z + (Math.random() - 0.5) * neb.spread * 2;
+        }
+        nebGeo.setAttribute('position', new THREE.BufferAttribute(nebPos, 3));
+        const nebMat = new THREE.PointsMaterial({
+          size: neb.size,
+          color: neb.color,
+          transparent: true,
+          opacity: neb.opacity,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        nebulaGroup.add(new THREE.Points(nebGeo, nebMat));
+      }
+
+      scene.add(nebulaGroup);
     }
 
     // Directional and ambient lighting for specular gloss
@@ -188,11 +221,11 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       lightGroup.name = 'ambient-cosmic-lighting';
       lightGroup.add(new THREE.AmbientLight(0xffffff, 0.9));
       
-      const dirLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
+      const dirLight = new THREE.DirectionalLight(0x38bdf8, 1.4);
       dirLight.position.set(150, 200, 100);
       lightGroup.add(dirLight);
 
-      const rimLight = new THREE.DirectionalLight(0x818cf8, 0.8);
+      const rimLight = new THREE.DirectionalLight(0x818cf8, 1.0);
       rimLight.position.set(-150, -150, -100);
       lightGroup.add(rimLight);
 
@@ -378,30 +411,49 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     else if (isCategory) colorHex = '#818cf8'; // Celestial Indigo for Level 2 Categories
 
     // Refined node sizes (sleek crystalline nodes rather than bulky cartoon spheres)
-    let baseRadius = Math.max(1.7, Math.min(3.4, 1.7 + (node.connectionCount || 0) * 0.22));
-    if (isUser) baseRadius = 5.6;
-    else if (isDomainHub) baseRadius = 3.8;
-    else if (isCategory) baseRadius = 2.8;
+    let baseRadius = Math.max(1.6, Math.min(3.2, 1.6 + (node.connectionCount || 0) * 0.2));
+    if (isUser) baseRadius = 5.4;
+    else if (isDomainHub) baseRadius = 3.6;
+    else if (isCategory) baseRadius = 2.6;
 
     if (isThisActiveNode) {
-      baseRadius *= 1.2; // Subtle swelling on active focus
+      baseRadius *= 1.25; // Subtle swelling on active focus
     }
 
-    // 1. Core sphere with specular gloss and emissive singularity
-    const coreGeoKey = `core-${baseRadius}`;
-    if (!geoCache.has(coreGeoKey)) {
-      geoCache.set(coreGeoKey, new THREE.SphereGeometry(baseRadius, (isUser || isDomainHub || isCategory) ? 32 : 18, (isUser || isDomainHub || isCategory) ? 32 : 18));
+    // 1. Faceted Crystal Core with specular metallic gloss and emissive singularity
+    const geoKey = isUser 
+      ? `user-diamond-${baseRadius}` 
+      : (isDomainHub 
+          ? `hub-dodec-${baseRadius}` 
+          : (isCategory ? `cat-ico-${baseRadius}` : `leaf-ico-${baseRadius}`));
+
+    if (!geoCache.has(geoKey)) {
+      if (isUser) {
+        // Faceted diamond icosahedron for root singularity
+        geoCache.set(geoKey, new THREE.IcosahedronGeometry(baseRadius, 1));
+      } else if (isDomainHub) {
+        // Faceted dodecahedron for major domain hubs
+        geoCache.set(geoKey, new THREE.DodecahedronGeometry(baseRadius));
+      } else if (isCategory) {
+        // Crystalline icosahedron for secondary categories
+        geoCache.set(geoKey, new THREE.IcosahedronGeometry(baseRadius, 2));
+      } else {
+        // Smooth crystalline micro-sphere for leaf entities
+        geoCache.set(geoKey, new THREE.SphereGeometry(baseRadius, 16, 16));
+      }
     }
+
     const coreMat = new THREE.MeshStandardMaterial({
       color: isUser ? '#ffffff' : colorHex,
       emissive: isUser ? '#38bdf8' : colorHex,
-      emissiveIntensity: isDimmed ? 0.08 : (isThisActiveNode ? 1.8 : (isUser ? 1.4 : (isDomainHub ? 0.95 : (isCategory ? 0.75 : 0.45)))),
-      roughness: 0.1,
-      metalness: 0.92,
+      emissiveIntensity: isDimmed ? 0.08 : (isThisActiveNode ? 2.0 : (isUser ? 1.5 : (isDomainHub ? 1.0 : (isCategory ? 0.8 : 0.5)))),
+      roughness: 0.12,
+      metalness: 0.95,
+      flatShading: isUser || isDomainHub, // Sharp crystal facets catch the specular light!
       transparent: isDimmed,
       opacity: isDimmed ? 0.15 : 1.0,
     });
-    const coreMesh = new THREE.Mesh(geoCache.get(coreGeoKey)!, coreMat);
+    const coreMesh = new THREE.Mesh(geoCache.get(geoKey)!, coreMat);
     group.add(coreMesh);
 
     // 2. Outer ethereal glow halo (additive blended)
@@ -413,48 +465,85 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const glowMat = new THREE.MeshBasicMaterial({
       color: isUser ? '#38bdf8' : colorHex,
       transparent: true,
-      opacity: isDimmed ? 0.02 : (isThisActiveNode ? 0.6 : (isUser ? 0.38 : (isDomainHub ? 0.26 : (isCategory ? 0.18 : 0.1)))),
+      opacity: isDimmed ? 0.02 : (isThisActiveNode ? 0.65 : (isUser ? 0.4 : (isDomainHub ? 0.28 : (isCategory ? 0.2 : 0.12)))),
       blending: THREE.AdditiveBlending,
       side: THREE.BackSide,
     });
     group.add(new THREE.Mesh(geoCache.get(glowGeoKey)!, glowMat));
 
-    // 3. Root User Node: Quantum Orbital Ring & Ethereal Corona
+    // 3. Root User Node: Dual Intersecting Quantum Orbital Rings & Ethereal Corona
     if (isUser) {
-      const ringGeoKey = 'user-quantum-ring';
-      if (!geoCache.has(ringGeoKey as any)) {
-        const ringGeo = new THREE.RingGeometry(baseRadius * 1.6, baseRadius * 1.7, 48);
-        geoCache.set(ringGeoKey as any, ringGeo as any);
+      // Ring 1 (Primary orbital equator)
+      const ringGeoKey1 = 'user-quantum-ring-1';
+      if (!geoCache.has(ringGeoKey1 as any)) {
+        const ringGeo = new THREE.RingGeometry(baseRadius * 1.55, baseRadius * 1.68, 48);
+        geoCache.set(ringGeoKey1 as any, ringGeo as any);
       }
-      const ringMat = new THREE.MeshBasicMaterial({
-        color: '#38bdf8',
+      const ringMat1 = new THREE.MeshBasicMaterial({
+        color: '#00f0ff',
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: isDimmed ? 0.15 : 0.7,
+        opacity: isDimmed ? 0.15 : 0.8,
         blending: THREE.AdditiveBlending,
       });
-      const ringMesh = new THREE.Mesh(geoCache.get(ringGeoKey as any) as any, ringMat);
-      ringMesh.rotation.x = Math.PI / 2.6;
-      group.add(ringMesh);
+      const ringMesh1 = new THREE.Mesh(geoCache.get(ringGeoKey1 as any) as any, ringMat1);
+      ringMesh1.rotation.x = Math.PI / 2.5;
+      ringMesh1.rotation.y = Math.PI / 6;
+      group.add(ringMesh1);
+
+      // Ring 2 (Counter-inclined polar ring)
+      const ringGeoKey2 = 'user-quantum-ring-2';
+      if (!geoCache.has(ringGeoKey2 as any)) {
+        const ringGeo = new THREE.RingGeometry(baseRadius * 1.8, baseRadius * 1.9, 48);
+        geoCache.set(ringGeoKey2 as any, ringGeo as any);
+      }
+      const ringMat2 = new THREE.MeshBasicMaterial({
+        color: '#818cf8',
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: isDimmed ? 0.1 : 0.55,
+        blending: THREE.AdditiveBlending,
+      });
+      const ringMesh2 = new THREE.Mesh(geoCache.get(ringGeoKey2 as any) as any, ringMat2);
+      ringMesh2.rotation.x = -Math.PI / 3.0;
+      ringMesh2.rotation.z = Math.PI / 4;
+      group.add(ringMesh2);
 
       // Whispering outer corona
       const outerGlowGeoKey = 'user-outer-corona';
       if (!geoCache.has(outerGlowGeoKey)) {
-        geoCache.set(outerGlowGeoKey, new THREE.SphereGeometry(baseRadius * 2.3, 16, 16));
+        geoCache.set(outerGlowGeoKey, new THREE.SphereGeometry(baseRadius * 2.4, 16, 16));
       }
       const outerCoronaMat = new THREE.MeshBasicMaterial({
         color: '#818cf8',
         transparent: true,
-        opacity: isDimmed ? 0.02 : 0.12,
+        opacity: isDimmed ? 0.02 : 0.14,
         blending: THREE.AdditiveBlending,
         side: THREE.BackSide,
       });
       group.add(new THREE.Mesh(geoCache.get(outerGlowGeoKey)!, outerCoronaMat));
+    } else if (isDomainHub) {
+      // Domain Hub subtle orbital ring
+      const hubRingGeoKey = `hub-ring-${baseRadius}`;
+      if (!geoCache.has(hubRingGeoKey as any)) {
+        const ringGeo = new THREE.RingGeometry(baseRadius * 1.4, baseRadius * 1.48, 36);
+        geoCache.set(hubRingGeoKey as any, ringGeo as any);
+      }
+      const hubRingMat = new THREE.MeshBasicMaterial({
+        color: '#00f0ff',
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: isDimmed ? 0.1 : 0.5,
+        blending: THREE.AdditiveBlending,
+      });
+      const hubRingMesh = new THREE.Mesh(geoCache.get(hubRingGeoKey as any) as any, hubRingMat);
+      hubRingMesh.rotation.x = Math.PI / 2.2;
+      group.add(hubRingMesh);
     }
 
     // 4. Tension additive shell
     if (node.isTension) {
-      const tensionRadius = baseRadius * 1.8;
+      const tensionRadius = baseRadius * 1.85;
       const tensionGeoKey = `tension-${tensionRadius}`;
       if (!geoCache.has(tensionGeoKey)) {
         geoCache.set(tensionGeoKey, new THREE.SphereGeometry(tensionRadius, 16, 16));
@@ -464,27 +553,37 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       const tensionMat = new THREE.MeshBasicMaterial({
         color: tensionColor,
         transparent: true,
-        opacity: isDimmed ? 0.1 : 0.5,
+        opacity: isDimmed ? 0.1 : 0.55,
         blending: THREE.AdditiveBlending,
         side: THREE.BackSide,
       });
       group.add(new THREE.Mesh(geoCache.get(tensionGeoKey)!, tensionMat));
     }
 
-    // 5. Clean, elegant typography (NO CLUNKY BOXES!)
-    const sprite = new SpriteText(node.name || node.id);
-    sprite.color = isDimmed 
-      ? 'rgba(255, 255, 255, 0.15)'
-      : (isThisActiveNode 
-          ? '#00f0ff' 
-          : (isUser ? '#ffffff' : (isDomainHub ? '#38bdf8' : (isCategory ? '#c084fc' : 'rgba(255, 255, 255, 0.85)'))));
-    sprite.textHeight = (isThisActiveNode ? 1.2 : 1.0) * (isUser ? 3.2 : (isDomainHub ? 2.4 : (isCategory ? 1.9 : 1.5)));
-    sprite.fontSize = 80;
-    sprite.fontFace = 'JetBrains Mono, -apple-system, system-ui, sans-serif';
-    sprite.backgroundColor = undefined; // PURE FLOATING TYPOGRAPHY - NO DARK BOX!
-    sprite.padding = 0;
-    sprite.position.set(0, baseRadius + (isUser ? 4.0 : (isDomainHub ? 3.0 : (isCategory ? 2.4 : 1.8))), 0);
-    group.add(sprite);
+    // 5. Clean, elegant typography with Progressive Disclosure (Declutters leaf swarm)
+    const shouldShowLabel = 
+      isUser ||
+      isDomainHub ||
+      isCategory ||
+      isThisActiveNode ||
+      isConnectedNeighbor ||
+      (!isFocusActive && (node.connectionCount || 0) >= 3);
+
+    if (shouldShowLabel) {
+      const sprite = new SpriteText(node.name || node.id);
+      sprite.color = isDimmed 
+        ? 'rgba(255, 255, 255, 0.15)'
+        : (isThisActiveNode 
+            ? '#00f0ff' 
+            : (isUser ? '#ffffff' : (isDomainHub ? '#38bdf8' : (isCategory ? '#c084fc' : 'rgba(255, 255, 255, 0.85)'))));
+      sprite.textHeight = (isThisActiveNode ? 1.25 : 1.0) * (isUser ? 3.2 : (isDomainHub ? 2.4 : (isCategory ? 1.9 : 1.45)));
+      sprite.fontSize = 80;
+      sprite.fontFace = 'JetBrains Mono, -apple-system, system-ui, sans-serif';
+      sprite.backgroundColor = undefined; // PURE FLOATING TYPOGRAPHY - NO DARK RECTANGULAR BOX!
+      sprite.padding = 0;
+      sprite.position.set(0, baseRadius + (isUser ? 4.2 : (isDomainHub ? 3.2 : (isCategory ? 2.5 : 1.8))), 0);
+      group.add(sprite);
+    }
 
     return group;
   }, [threeLib, spriteTextLib, activeFocusNode, connectedState]);
@@ -567,7 +666,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
           nodeThreeObjectExtend={false}
           
           // Links (Neural Synapses)
-          linkCurvature={0.12}
+          linkCurvature={0.16}
           linkWidth={linkWidth}
           linkColor={linkColor}
           linkOpacity={1}

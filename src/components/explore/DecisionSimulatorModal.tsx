@@ -54,15 +54,15 @@ export default function DecisionSimulatorModal({ isOpen, onClose }: DecisionSimu
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
       <div 
-        className="w-full max-w-2xl max-h-[90vh] bg-[#0c0d14] border border-white/15 rounded-3xl p-6 shadow-2xl flex flex-col overflow-hidden text-white relative"
+        className="w-full max-w-2xl max-h-[90vh] bg-[#0c0d18]/95 backdrop-blur-2xl border border-white/15 rounded-3xl p-6 shadow-[0_20px_60px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden text-white relative"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-white/10 shrink-0">
           <div className="flex items-center gap-2.5">
-            <span className="w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_12px_#22d3ee] animate-pulse" />
-            <h2 className="text-lg font-serif font-bold text-white tracking-wide">
-              Decision &amp; Scenario Simulator
+            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_12px_#22d3ee] animate-pulse" />
+            <h2 className="text-base font-serif font-bold text-white tracking-wide">
+              Decision &amp; Multiverse Simulator
             </h2>
           </div>
           <button 

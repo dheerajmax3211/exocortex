@@ -57,10 +57,9 @@ export default function MorningBriefingModal({ isOpen, onClose, onOpenSimulator 
   const topPriority = topTension?.actionable_directive || "Reflect on your current state and recalibrate.";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fadeIn">
       <div 
-        className="w-full max-w-md bg-[#0a0a0f]/90 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh]"
-        style={{ boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)' }}
+        className="w-full max-w-md bg-[#0c0d18]/95 backdrop-blur-2xl border border-white/15 rounded-3xl p-6 shadow-[0_25px_60px_rgba(0,0,0,0.85)] flex flex-col max-h-[85vh] text-white relative"
       >
         <div className="flex items-center justify-between mb-4 border-b border-white/10 pb-4">
           <div className="flex items-center gap-2.5">

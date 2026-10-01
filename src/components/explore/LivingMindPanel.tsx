@@ -115,108 +115,56 @@ export default function LivingMindPanel({ isOpen, onClose, onOpenSimulator }: Li
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-mono uppercase text-white/60 tracking-wider">
-                Living Life Vectors
+                Subconscious Life Vectors
               </span>
-              <span className="text-[10px] font-mono text-white/40">
-                Grounded 0–100
+              <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/40 px-2 py-0.5 rounded-full border border-cyan-500/20">
+                Live Telemetry
               </span>
             </div>
 
-            <div className="space-y-2.5">
-              {/* Career */}
-              <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-white/80 flex items-center gap-1.5">
-                    <span>💼</span>
-                    <span>Career &amp; Wealth (₹30–40LPA)</span>
-                  </span>
-                  <span className={`font-mono font-bold ${getScoreColor(vectors.career_score).split(' ')[0]}`}>
-                    {vectors.career_score}%
-                  </span>
+            <div className="grid grid-cols-1 gap-2.5">
+              {[
+                { key: 'career', label: 'Career & Trajectory', score: vectors.career_score, icon: '💼', color: '#00f0ff' },
+                { key: 'finance', label: 'Financial Autonomy', score: vectors.finance_score, icon: '💰', color: '#10b981' },
+                { key: 'fitness', label: 'Physical Vitality', score: vectors.fitness_score, icon: '⚡', color: '#f59e0b' },
+                { key: 'execution', label: 'Execution Velocity', score: vectors.execution_score, icon: '🎯', color: '#818cf8' },
+                { key: 'mindset', label: 'Mindset & Clarity', score: vectors.mindset_score, icon: '🧠', color: '#c084fc' },
+              ].map((vec) => (
+                <div 
+                  key={vec.key} 
+                  className="bg-white/[0.03] hover:bg-white/[0.06] p-3 rounded-2xl border border-white/10 transition-all flex items-center justify-between group shadow-sm"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-sm shadow-inner">
+                      {vec.icon}
+                    </div>
+                    <div>
+                      <div className="text-xs font-medium text-white/90 group-hover:text-white transition-colors">
+                        {vec.label}
+                      </div>
+                      <div className="w-36 h-1.5 bg-white/10 rounded-full mt-1.5 overflow-hidden">
+                        <div 
+                          className="h-full rounded-full transition-all duration-700"
+                          style={{ 
+                            width: `${vec.score}%`,
+                            backgroundColor: vec.color,
+                            boxShadow: `0 0 10px ${vec.color}80`
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="text-right">
+                    <span 
+                      className="font-mono text-sm font-bold tracking-tight"
+                      style={{ color: vec.color }}
+                    >
+                      {vec.score}%
+                    </span>
+                  </div>
                 </div>
-                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-500 ${getScoreColor(vectors.career_score).split(' ')[1]}`}
-                    style={{ width: `${vectors.career_score}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Finance */}
-              <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-white/80 flex items-center gap-1.5">
-                    <span>💰</span>
-                    <span>Financial Freedom &amp; Debt Burn</span>
-                  </span>
-                  <span className={`font-mono font-bold ${getScoreColor(vectors.finance_score).split(' ')[0]}`}>
-                    {vectors.finance_score}%
-                  </span>
-                </div>
-                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-500 ${getScoreColor(vectors.finance_score).split(' ')[1]}`}
-                    style={{ width: `${vectors.finance_score}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Fitness */}
-              <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-white/80 flex items-center gap-1.5">
-                    <span>⚡</span>
-                    <span>Physical Vitality (70–74kg target)</span>
-                  </span>
-                  <span className={`font-mono font-bold ${getScoreColor(vectors.fitness_score).split(' ')[0]}`}>
-                    {vectors.fitness_score}%
-                  </span>
-                </div>
-                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-500 ${getScoreColor(vectors.fitness_score).split(' ')[1]}`}
-                    style={{ width: `${vectors.fitness_score}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Execution */}
-              <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-white/80 flex items-center gap-1.5">
-                    <span>🎯</span>
-                    <span>Execution vs. System Planning</span>
-                  </span>
-                  <span className={`font-mono font-bold ${getScoreColor(vectors.execution_score).split(' ')[0]}`}>
-                    {vectors.execution_score}%
-                  </span>
-                </div>
-                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-500 ${getScoreColor(vectors.execution_score).split(' ')[1]}`}
-                    style={{ width: `${vectors.execution_score}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Mindset */}
-              <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-white/80 flex items-center gap-1.5">
-                    <span>🧠</span>
-                    <span>Mindset &amp; Emotional Clarity</span>
-                  </span>
-                  <span className={`font-mono font-bold ${getScoreColor(vectors.mindset_score).split(' ')[0]}`}>
-                    {vectors.mindset_score}%
-                  </span>
-                </div>
-                <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-500 ${getScoreColor(vectors.mindset_score).split(' ')[1]}`}
-                    style={{ width: `${vectors.mindset_score}%` }}
-                  />
-                </div>
-              </div>
+              ))}
             </div>
           </div>
 
