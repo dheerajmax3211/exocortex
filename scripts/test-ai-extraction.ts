@@ -151,7 +151,7 @@ ROOT USER IDENTITY (CRITICAL):
       schema: extractionSchema
     });
 
-    const hierarchical = restructureHierarchicalExtraction(
+    const hierarchical = await restructureHierarchicalExtraction(
       result.entities,
       result.edges,
       result.facts,
