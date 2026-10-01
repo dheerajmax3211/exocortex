@@ -253,12 +253,59 @@ If the input ONLY contains biographical attributes with no real-world entities, 
   1. Top-level Domain Hubs ('Photography', 'Media & Entertainment', 'Dating & Relationships', 'International Relocation', 'Food Preferences', etc.)
   2. First-degree personal anchors: Parents ('family_of'), Primary Employer ('works_at'), Current City ('lives_in'), or major autobiographical life events ('Ooty trip').
 
-5. Dates & Facts:
+4. STATEFUL GRAPH MUTAGENESIS (QUANTITIES & PROGRESSION):
+- If the user indicates acquiring *more* of something they already own (e.g., "purchased another Godox lc500r"), DO NOT create a new entity. 
+- Look at the entity's \`current_state\` in the Candidates context. If it has \`quantity: X\`, update the entity props to include \`quantity: X+1\` (or \`quantity: 2\` if undefined). 
+- If the user says "I now have 3 of these", update props to include \`quantity: 3\`.
+- This applies to progression as well (e.g., "finished season 4", update props with \`current_season: 4\`).
+
+5. TEMPORAL EVENT INSTANTIATION (RECURRING EVENTS):
+- When the user mentions recurring, cyclical events (e.g., "2024 Birthday", "2025 Birthday", "Christmas 2023", "Our 5th Anniversary"):
+  - DO NOT merge all years into one massive abstract "Birthday" node.
+  - DO NOT attach specific people to the abstract concept.
+  - Instead, create a specific Event Instance (e.g., name: "2025 Birthday", type: "event") and connect it to the abstract Concept (name: "Birthday", type: "event" or "concept") via an edge: "instance_of".
+  - Attach the specific participants (a,b,c) and date (2025-10-04) strictly to the Event Instance ("2025 Birthday").
+
+7. MULTI-HOP GRAPH REASONING (LINKING NODES):
+- You now have access to \`linked_nodes\` for every candidate entity.
+- If a user mentions a concept, DO NOT just look at the node's name. Think based on its linking nodes!
+- Example: If the user says "John came over", and there are two Johns, look at their \`linked_nodes\`. If John A is linked to "Software Company" and John B is linked to "Family", pick the right one based on the memory context.
+
+6. Dates & Facts:
 - Resolve relative dates against current date and Known Life Periods.
 - Extract ALL granular facts (specs, numbers, dates, sentiments, opinions, quotes) into the facts array.`;
 
         const chunks = chunkText(text, 7000);
-        const candidateContext = JSON.stringify(candidates.map(c => ({ id: c.id, type: c.type, name: c.name, aliases: c.aliases, summary: c.summary })), null, 2);
+        
+        const candidateIds = candidates.map(c => c.id);
+        const { data: candidateEdges } = await supabase
+          .from('edges')
+          .select('src, dst, relation')
+          .in('src', candidateIds)
+          .is('deleted_at', null)
+          .limit(100);
+
+        // Build a mapping for fast name lookup
+        const idToName = new Map(candidates.map(c => [c.id, c.name]));
+        
+        // Enrich candidates with their active subgraph connections!
+        const enrichedCandidates = candidates.map(c => {
+          const relatedEdges = (candidateEdges || [])
+            .filter(e => e.src === c.id)
+            .map(e => `${e.relation} -> ${idToName.get(e.dst) || 'Unknown Node'}`);
+            
+          return {
+            id: c.id,
+            type: c.type,
+            name: c.name,
+            aliases: c.aliases,
+            summary: c.summary,
+            current_state: c.props,
+            linked_nodes: relatedEdges
+          };
+        });
+
+        const candidateContext = JSON.stringify(enrichedCandidates, null, 2);
         const periodsContext = JSON.stringify(periods || [], null, 2);
 
         const extractionPromises = chunks.map(chunk => chatJSON({
