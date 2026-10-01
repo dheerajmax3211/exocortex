@@ -92,17 +92,15 @@ function getOrComputeLinkSynapse(link: any, index = 0) {
   const rWidth = ((hash * 69069 + 1) % 2147483647) / 2147483647;
   const rColor = ((hash * 134775813 + 1) % 2147483647) / 2147483647;
 
-  // Massively randomized speed: 0.0012 to 0.016 (over 13x speed difference!)
-  link.__synapseSpeed = 0.0012 + rSpeed * 0.0148;
+  // Calibrate speed: gentle, calming pace (0.0010 to 0.0065) with natural organic variance
+  link.__synapseSpeed = 0.0010 + rSpeed * 0.0055;
   
-  // Stochastic particle count:
-  // ~45% links have 0 particles (silent synapses)
-  // ~35% have 1 particle
-  // ~15% have 2 particles
-  // ~5% have 3 particles
-  link.__synapseParticles = rCount > 0.45 ? (rCount > 0.95 ? 3 : (rCount > 0.80 ? 2 : 1)) : 0;
-  link.__synapseConnectedParticles = 2 + Math.floor(rCount * 3); // 2 to 4 bursts when connected
-  link.__synapseWidth = 0.75 + rWidth * 1.45; // 0.75px to 2.2px
+  // Drastically reduced particle count (serene, distraction-free):
+  // 88% of links have ZERO particles (silent, clean resting pathways)
+  // Only ~12% have a single subtle spark drifting through
+  link.__synapseParticles = rCount > 0.88 ? 1 : 0;
+  link.__synapseConnectedParticles = 1; // Exactly 1 clean pulse per connected link on focus
+  link.__synapseWidth = 0.75 + rWidth * 0.55; // 0.75px to 1.3px subtle, delicate spark
   link.__synapseColor = SPARK_PALETTE[Math.floor(rColor * SPARK_PALETTE.length)];
   return link;
 }
@@ -684,7 +682,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     return 0.4;
   }, [activeFocusNode]);
 
-  // ---- Link Directional Particles (Massively Randomized Synaptic Transmissions) ----
+  // ---- Link Directional Particles (Calm, Serene Organic Synaptic Impulses) ----
   const linkParticles = useCallback((link: any) => {
     const l = getOrComputeLinkSynapse(link);
     const srcId = typeof l.source === 'object' ? l.source.id : l.source;
@@ -692,12 +690,14 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
 
     if (activeFocusNode) {
       if (srcId === activeFocusNode.id || tgtId === activeFocusNode.id) {
-        return l.__synapseConnectedParticles || 3;
+        // Only 1 single focused light pulse on directly connected pathways
+        return 1;
       }
-      // Non-connected background links: mostly quiet (0 particles) to accentuate focused spotlight
-      return (l.__synapseParticles && l.__synapseParticles > 1) ? 1 : 0;
+      // Zero particles on all background links during focus
+      return 0;
     }
 
+    // In ambient idle mode: 88% of links are silent (0 particles). Only ~12% carry 1 solitary spark.
     return l.__synapseParticles ?? 0;
   }, [activeFocusNode]);
 
@@ -706,14 +706,14 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const srcId = typeof l.source === 'object' ? l.source.id : l.source;
     const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
 
-    const baseSpeed = l.__synapseSpeed || 0.005;
+    const baseSpeed = l.__synapseSpeed || 0.003;
 
     if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
-      // Rapid energetic burst across active synapse
-      return baseSpeed * 1.8 + 0.004;
+      // Smooth, deliberate pulse on active paths
+      return 0.007;
     }
 
-    // Massively varied individual link speed (0.0012 to 0.016)
+    // Gentle organic variance across the few active background links
     return baseSpeed;
   }, [activeFocusNode]);
 
@@ -722,10 +722,10 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const srcId = typeof l.source === 'object' ? l.source.id : l.source;
     const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
 
-    const baseWidth = l.__synapseWidth || 1.1;
+    const baseWidth = l.__synapseWidth || 0.9;
 
     if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
-      return Math.max(2.0, baseWidth * 1.5);
+      return 1.6; // Refined focused pulse
     }
 
     return baseWidth;
