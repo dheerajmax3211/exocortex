@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { mergeEntities } from '@/lib/db';
+import { mergeEntities } from '../../../../lib/db';
 
 export async function GET(req: Request) {
   try {
