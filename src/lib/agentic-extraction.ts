@@ -68,7 +68,21 @@ const submitMutationsTool = {
           },
           required: ['entity_temp_id', 'key', 'value']
         }
-      }
+      },
+      event: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          summary: { type: 'string' }
+        }
+      },
+      questions: {
+        type: 'array',
+        items: { type: 'string' }
+      },
+      event_date: { type: 'string' },
+      date_end: { type: 'string' },
+      date_precision: { type: 'string', enum: ['day', 'month', 'year', 'period', 'unknown'] }
     },
     required: ['entities', 'edges', 'facts']
   }
@@ -84,7 +98,9 @@ export async function runAgenticExtraction(
   // Execute tool logic
   const executeTool = async (name: string, args: Record<string, any>) => {
     if (name === 'query_graph') {
-      const candidates = await retrieveHighRecallCandidates(supabase, userId, args.concept);
+      const concept = args.concept || args.query || args.name || '';
+      if (!concept) return JSON.stringify({ message: 'Error: Must provide a concept string to search for.' });
+      const candidates = await retrieveHighRecallCandidates(supabase, userId, concept);
       if (candidates.length === 0) return JSON.stringify({ message: 'No existing entities found for concept.' });
       
       const candidateIds = candidates.map(c => c.id);
@@ -119,9 +135,18 @@ export async function runAgenticExtraction(
   // Find the submit_graph_mutations tool call
   const submitCall = response.toolCalls.find(tc => tc.name === 'submit_graph_mutations');
   if (submitCall) {
-    return submitCall.args;
+    return {
+      entities: submitCall.args.entities || [],
+      edges: submitCall.args.edges || [],
+      facts: submitCall.args.facts || [],
+      event: submitCall.args.event || null,
+      questions: submitCall.args.questions || [],
+      event_date: submitCall.args.event_date || null,
+      date_end: submitCall.args.date_end || null,
+      date_precision: submitCall.args.date_precision || 'unknown'
+    };
   }
 
   // Fallback if the LLM failed to call the tool
-  return { entities: [], edges: [], facts: [] };
+  return { entities: [], edges: [], facts: [], event: null, questions: [], event_date: null, date_end: null, date_precision: 'unknown' };
 }

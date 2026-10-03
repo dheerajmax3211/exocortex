@@ -201,7 +201,7 @@ export async function retrieveHighRecallCandidates(
     'where', 'which', 'their', 'there', 'they'
   ]);
 
-  const rawTokens = rawText
+  const rawTokens = (rawText || "")
     .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)

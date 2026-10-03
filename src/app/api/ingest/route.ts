@@ -434,7 +434,7 @@ If the input ONLY contains biographical attributes with no real-world entities, 
               entity_temp_id: tempIdMapping.get(fact.entity_temp_id) || fact.entity_temp_id,
             });
           }
-          for (const q of ex.questions) {
+          for (const q of (ex.questions || [])) {
             mergedQuestions.add(q);
           }
         }

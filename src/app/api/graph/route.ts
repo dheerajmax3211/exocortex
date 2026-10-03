@@ -30,7 +30,26 @@ export async function GET(req: Request) {
     } else {
       entQuery = entQuery.is('parent_context_id', null);
     }
-    const { data: entities, error: entError } = await entQuery;
+    
+    let entities = null;
+    let entError = null;
+    
+    try {
+      const result = await entQuery;
+      entities = result.data;
+      entError = result.error;
+      
+      if (entError && entError.code === '42703') {
+        // Migration 008 missing, graceful fallback
+        console.warn('Migration 008 missing, falling back to flat entity graph');
+        const fallback = await supabase.from('entities').select('id, name, type, summary, props').eq('user_id', user.id).is('deleted_at', null);
+        entities = fallback.data;
+        entError = fallback.error;
+      }
+    } catch (e) {
+      entError = e;
+    }
+
 
 
     if (entError) throw entError;
@@ -48,7 +67,26 @@ export async function GET(req: Request) {
     } else {
       edgeQuery = edgeQuery.is('parent_context_id', null);
     }
-    const { data: edges, error: edgesError } = await edgeQuery;
+    
+    let edges = null;
+    let edgesError = null;
+    
+    try {
+      const result = await edgeQuery;
+      edges = result.data;
+      edgesError = result.error;
+      
+      if (edgesError && edgesError.code === '42703') {
+        // Migration 008 missing, graceful fallback
+        console.warn('Migration 008 missing, falling back to flat edge graph');
+        const fallback = await supabase.from('edges').select('src, dst, relation').eq('user_id', user.id).is('deleted_at', null);
+        edges = fallback.data;
+        edgesError = fallback.error;
+      }
+    } catch (e) {
+      edgesError = e;
+    }
+
 
 
     if (edgesError) throw edgesError;
