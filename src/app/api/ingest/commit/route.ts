@@ -1,5 +1,6 @@
 import { NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { predictMissingLinks } from '@/lib/gnn-topology';
 import * as db from '@/lib/db';
 import { placeNewEntity } from '@/lib/graph/layout';
 
@@ -195,6 +196,9 @@ export async function POST(req: Request) {
         learned_at: new Date().toISOString()
       } as any);
     }
+
+    
+        
 
     // 3. Process facts
     for (const fact of facts || []) {

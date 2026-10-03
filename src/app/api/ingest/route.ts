@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { chatJSON } from '@/lib/llm';
+import { runAgenticExtraction } from '@/lib/agentic-extraction';
 import { stringSimilarity } from '@/lib/entity-resolution';
 import { z } from 'zod';
 
@@ -271,6 +272,18 @@ If the input ONLY contains biographical attributes with no real-world entities, 
 - If a user mentions a concept, DO NOT just look at the node's name. Think based on its linking nodes!
 - Example: If the user says "John came over", and there are two Johns, look at their \`linked_nodes\`. If John A is linked to "Software Company" and John B is linked to "Family", pick the right one based on the memory context.
 
+
+8. FRACTAL NODES (HYPERGRAPHS) - MACRO VS MICRO CONTEXT:
+- If the memory contains a massive overarching event (e.g., "My Trip to Japan", "My 2025 Birthday Party"), treat it as a MACRO CONTEXT (a parent node).
+- Extract the sub-details (e.g., specific meals, hotels, transit on the trip) as MICRO CONTEXTS.
+- For all MICRO entities and edges, you MUST assign \`parent_context_temp_id\` equal to the \`temp_id\` of the MACRO parent node!
+- Example: 
+  entities: [
+    { temp_id: 'trip', type: 'event', name: 'Trip to Japan' },
+    { temp_id: 'hotel', type: 'place', name: 'Shibuya K Hotel', parent_context_temp_id: 'trip' }
+  ]
+
+
 6. Dates & Facts:
 - Resolve relative dates against current date and Known Life Periods.
 - Extract ALL granular facts (specs, numbers, dates, sentiments, opinions, quotes) into the facts array.`;
@@ -308,11 +321,16 @@ If the input ONLY contains biographical attributes with no real-world entities, 
         const candidateContext = JSON.stringify(enrichedCandidates, null, 2);
         const periodsContext = JSON.stringify(periods || [], null, 2);
 
-        const extractionPromises = chunks.map(chunk => chatJSON({
-          system: systemPrompt,
-          prompt: `Raw Memory Entry (Chunk):\n"${chunk}"\n\nCandidate Existing Entities in Graph:\n${candidateContext}\n\nKnown Life Periods:\n${periodsContext}`,
-          schema: extractionSchema
-        }));
+        
+        // UPGRADE 1: AGENTIC TOOL-CALLING LOOP & UPGRADE 3: HYPERGRAPH ONTOLOGY
+        const extractionPromises = chunks.map(chunk => runAgenticExtraction(
+          supabase,
+          user.id,
+          `Raw Memory Entry (Chunk):\n"${chunk}"\n\nKnown Life Periods:\n${periodsContext}`,
+          me,
+          systemPrompt
+        ));
+
 
         const allExtractions = await Promise.all(extractionPromises);
 

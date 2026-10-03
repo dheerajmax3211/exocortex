@@ -110,6 +110,8 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   const [graphData, setGraphData] = useState<{ nodes: Graph3DNode[]; links: Graph3DLink[] }>({ nodes: [], links: [] });
   const [selectedNode, setSelectedNode] = useState<Graph3DNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<Graph3DNode | null>(null);
+  const [currentContextId, setCurrentContextId] = useState<string | null>(null);
+  const [contextHistory, setContextHistory] = useState<string[]>([]);
   const [cardPos, setCardPos] = useState({ x: 0, y: 0 });
   const [threeLib, setThreeLib] = useState<typeof import('three') | null>(null);
   const [spriteTextLib, setSpriteTextLib] = useState<any>(null);
@@ -155,7 +157,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   useEffect(() => {
     const fetchGraph = async () => {
       try {
-        const res = await fetch('/api/graph');
+        const res = await fetch(`/api/graph${currentContextId ? `?parent=${currentContextId}` : ''}`);
         const data = await res.json();
         const rawNodes: Graph3DNode[] = data.nodes || [];
         const rawLinks = data.links || data.edges || [];
@@ -259,7 +261,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       }
     };
     fetchGraph();
-  }, []);
+  }, [currentContextId]);
 
   // Configure physics, ambient starfield, and controls after graph mounts
   useEffect(() => {
@@ -746,7 +748,21 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   }, [threeLib, spriteTextLib, activeFocusNode, connectedState]);
 
   // ---- Interactions ----
+  
+  const handleNodeRightClick = useCallback((node: any) => {
+    setContextHistory(prev => [...prev, currentContextId || 'root']);
+    setCurrentContextId(node.id);
+  }, [currentContextId]);
+
+  const navigateUp = useCallback(() => {
+    if (contextHistory.length === 0) return;
+    const prevContext = contextHistory[contextHistory.length - 1];
+    setContextHistory(prev => prev.slice(0, -1));
+    setCurrentContextId(prevContext === 'root' ? null : prevContext);
+  }, [contextHistory]);
+
   const handleNodeClick = useCallback((node: any, event: MouseEvent) => {
+
     // Stop auto-rotation on click
     const controls = fgRef.current?.controls?.();
     if (controls) controls.autoRotate = false;
@@ -888,6 +904,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
           
           // Interactions
           onNodeClick={handleNodeClick}
+          onNodeRightClick={handleNodeRightClick}
           onNodeHover={handleNodeHover}
           onBackgroundClick={handleBackgroundClick}
           enablePointerInteraction={true}

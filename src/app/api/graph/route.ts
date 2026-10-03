@@ -5,6 +5,8 @@ import { analyzeKnowledgeGraphHybrid } from '@/lib/graph-analytics';
 import { isDomainHubName, isCategoryName } from '@/lib/graph-hierarchy';
 
 export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const parentContextId = url.searchParams.get('parent');
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -16,20 +18,38 @@ export async function GET(req: Request) {
     const me = await getOrCreateMeEntity(supabase, user.id);
 
     // Fetch ALL entities
-    const { data: entities, error: entError } = await supabase
+    
+    let entQuery = supabase
       .from('entities')
       .select('id, name, type, summary, props')
       .eq('user_id', user.id)
       .is('deleted_at', null);
+      
+    if (parentContextId) {
+      entQuery = entQuery.eq('parent_context_id', parentContextId);
+    } else {
+      entQuery = entQuery.is('parent_context_id', null);
+    }
+    const { data: entities, error: entError } = await entQuery;
+
 
     if (entError) throw entError;
 
     // Fetch edges
-    const { data: edges, error: edgesError } = await supabase
+    
+    let edgeQuery = supabase
       .from('edges')
       .select('src, dst, relation')
       .eq('user_id', user.id)
       .is('deleted_at', null);
+      
+    if (parentContextId) {
+      edgeQuery = edgeQuery.eq('parent_context_id', parentContextId);
+    } else {
+      edgeQuery = edgeQuery.is('parent_context_id', null);
+    }
+    const { data: edges, error: edgesError } = await edgeQuery;
+
 
     if (edgesError) throw edgesError;
 

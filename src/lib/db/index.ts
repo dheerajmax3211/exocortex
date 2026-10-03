@@ -65,9 +65,29 @@ export async function getEntities(supabase: SupabaseClient, ids: string[]): Prom
   return data
 }
 
-export async function updateEntity(supabase: SupabaseClient, id: string, updates: Partial<Entity>): Promise<Entity> {
-  const { data, error } = await supabase.from('entities').update(updates).eq('id', id).select().single()
-  if (error) throw error
+export async function updateEntity(supabase: SupabaseClient, id: string, updates: Partial<Entity>, entryId?: string): Promise<Entity> {
+  // If we are updating props, use the 4D Temporal State Ledger (mutate_entity_state)
+  if (updates.props) {
+    try {
+      await supabase.rpc('mutate_entity_state', {
+        p_entity_id: id,
+        p_new_props: updates.props,
+        p_entry_id: entryId
+      });
+      // The RPC already updates the entity's props column, so we remove it from updates to avoid redundant work
+      delete updates.props;
+    } catch (err) {
+      console.warn('4D State mutation RPC failed, falling back to standard update:', err);
+    }
+  }
+  
+  if (Object.keys(updates).length > 0) {
+    const { data, error } = await supabase.from('entities').update(updates).eq('id', id).select().single()
+    if (error) throw error
+    return data
+  }
+  
+  const { data } = await supabase.from('entities').select('*').eq('id', id).single()
   return data
 }
 
