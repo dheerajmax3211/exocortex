@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { chatJSON } from '@/lib/llm';
-import { runAgenticExtraction } from '@/lib/agentic-extraction';
 import { stringSimilarity } from '@/lib/entity-resolution';
 import { z } from 'zod';
 
@@ -322,14 +321,11 @@ If the input ONLY contains biographical attributes with no real-world entities, 
         const periodsContext = JSON.stringify(periods || [], null, 2);
 
         
-        // UPGRADE 1: AGENTIC TOOL-CALLING LOOP & UPGRADE 3: HYPERGRAPH ONTOLOGY
-        const extractionPromises = chunks.map(chunk => runAgenticExtraction(
-          supabase,
-          user.id,
-          `Raw Memory Entry (Chunk):\n"${chunk}"\n\nKnown Life Periods:\n${periodsContext}`,
-          me,
-          systemPrompt
-        ));
+        const extractionPromises = chunks.map(chunk => chatJSON({
+          system: systemPrompt,
+          prompt: `Raw Memory Entry (Chunk):\n"${chunk}"\n\nCandidate Existing Entities in Graph:\n${candidateContext}\n\nKnown Life Periods:\n${periodsContext}`,
+          schema: extractionSchema
+        }));
 
 
         const allExtractions = await Promise.all(extractionPromises);
