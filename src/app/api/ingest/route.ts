@@ -178,13 +178,41 @@ export async function POST(req: Request) {
         // For simplicity we will use the same supabase client, though in Edge/Vercel it might fail.
         // Actually, we can just use the provided client since it's a standard serverless function.
 
+        // On-device ML passes: local NER and sentiment grounding
+        const { extractNamedEntities } = await import('@/lib/ml/ner');
+        const { scoreEntryClauses } = await import('@/lib/ml/sentiment');
+        const [nerSpans, sentimentScores] = await Promise.all([
+          extractNamedEntities(text),
+          scoreEntryClauses(text)
+        ]);
+
+        try {
+          if (nerSpans.length > 0) {
+            await supabase.from('entry_ner_spans').insert(
+              nerSpans.map(s => ({ entry_id: entry.id, text: s.text, type: s.type, score: s.score }))
+            );
+          }
+          if (sentimentScores.length > 0) {
+            await supabase.from('entry_sentiment_scores').insert(
+              sentimentScores.map(s => ({ entry_id: entry.id, clause: s.clause, label: s.label, score: s.score }))
+            );
+          }
+        } catch (dbErr) {
+          console.warn('[ingest] ML inspection tables insert skipped (pending migration):', dbErr);
+        }
+
         // 2. Comprehensive Graph Taxonomy & Candidate Retrieval
         const { retrieveHighRecallCandidates } = await import('@/lib/entity-resolution');
         const { getOrCreateMeEntity } = await import('@/lib/db');
         const me = await getOrCreateMeEntity(supabase, user.id);
 
+        // Augment candidate retrieval text with independently tagged NER spans
+        const candidateSearchText = nerSpans.length > 0
+          ? `${text} ${nerSpans.map(s => s.text).join(' ')}`
+          : text;
+
         // Fetch high-recall candidates bounded to 25 to optimize latency and prompt tokens
-        const highRecall = await retrieveHighRecallCandidates(supabase, user.id, text);
+        const highRecall = await retrieveHighRecallCandidates(supabase, user.id, candidateSearchText);
         const candidateMap = new Map<string, any>();
         for (const h of highRecall.slice(0, 24)) {
           candidateMap.set(h.id, h);

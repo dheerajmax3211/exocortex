@@ -1,76 +1,58 @@
-# Architectural Decisions & Technical Assumptions — Virtual Brain
+# Machine Learning Architecture Assumptions & Technical Design Decisions
 
-This document records all architectural choices, API research discoveries, and design assumptions made during the design and implementation of the Virtual Brain personal memory graph system.
-
----
-
-## 1. LLM Provider Adapter (`lib/llm.ts`)
-
-### Command Code API Research Findings
-- **Endpoint**: `POST https://api.commandcode.ai/alpha/generate`
-- **Authentication**: `Authorization: Bearer <API_KEY>` (key format `user_...`)
-- **Protocol**: Exclusively streaming over HTTP using `Accept: text/event-stream` with newline-delimited JSON (NDJSON) event lines (`text-delta`, `tool-call`, `tool-input-delta`, `finish-step`, `finish`, `error`).
-- **Required Envelope**: Unlike OpenAI's `/v1/chat/completions`, Command Code requires an outer envelope wrapping `config`, `params`, `mode: "agent"`, `permissionMode: "standard"`, and a generated `threadId`.
-- **System Prompt Rules**:
-  - `role: "system"` is strictly rejected in `params.messages` (returns HTTP 400).
-  - System prompts must be supplied in `params.system: [{ type: "text", text: "..." }]`.
-  - If omitted, Command Code auto-injects ~7,500 tokens of CLI instructions; we pass `[{ type: "text", text: " " }]` when no system prompt is desired to suppress this.
-- **Model Identifiers**:
-  - `deepseek/deepseek-v4-flash` (aliases: `deepseek-v4-flash`, `deepseek-flash`)
-  - `deepseek/deepseek-v4-pro` (aliases: `deepseek-v4-pro`, `deepseek-v4`, `deepseek-pro`)
-- **Terms of Service (ToS) Consideration**:
-  - Command Code API keys are officially intended for their terminal CLI. Using them directly from a hosted Next.js web application could violate terms or encounter rate/origin limits if their gateway enforces strict User-Agent or IP filtering in the future. We provide a full OpenAI-compatible adapter as a drop-in alternative.
-
-### Direct DeepSeek API (`api.deepseek.com`)
-- **Base URL**: `https://api.deepseek.com/v1`
-- **Primary Model**: `deepseek-flash` (official identifier for DeepSeek-V4.1-Flash; legacy aliases `deepseek-v4-flash` route to it).
-- **Tool Calling**: Standard OpenAI tool calling format with function declarations.
-- **Strict JSON Mode**: Enabled via `response_format: { type: "json_object" }`. The system/user prompt **must contain the string "json"** explicitly to prevent the model from emitting infinite whitespace (an official DeepSeek API quirk).
-
-### Tool Calling & Fallbacks
-- Both native OpenAI tool calling and Command Code NDJSON tool stream parsing are implemented.
-- If tool calling fails or is unsupported by an upstream model, a JSON prompt-based protocol (`{"tool": "...", "args": {...}}`) is executed and fed back into the conversation context.
+This document details the exact model choices, vector dimensions, runtime constraints, and trade-offs implemented across the additive ML/DL layer in Virtual Brain.
 
 ---
 
-## 2. Graph Storage & Layout Physics
+## 1. On-Device Model Selection & Transformers.js Integration
 
-- **Database**: Plain Postgres tables on Supabase Free Tier (`entries`, `entities`, `edges`, `facts`, `entry_entities`, `graph_layout`). No graph database or paid add-on is used.
-- **Layout Math (`src/lib/graph/layout.ts`)**: `d3-force` is used strictly as a headless math engine to compute (x, y) coordinates upon node ingestion or relaxation. It is never used for DOM/SVG rendering.
-- **Incremental Placement**: New entities are placed near their most-connected neighbor in `graph_layout` (or within the organic brain boundary if isolated) followed by 5–10 local simulation iterations with immediate neighbors. Full-graph re-layouts are avoided to ensure visual stability between sessions.
+### Dependency
+- Reused existing `@xenova/transformers` (`^2.17.2`) from `package.json`. No redundant packages (e.g. `@huggingface/transformers`) were added.
+- All models execute 100% locally using quantized ONNX runtime binaries without GPU requirements or paid external API calls.
 
----
+### Token Classification (NER)
+- **Model Selected**: `Xenova/bert-base-NER` (quantized ONNX, ~100MB).
+- **Rationale**: Tested directly on real Indian entity names and geographical locations (e.g., *Rahul*, *Aditya*, *Bangalore*, *Taj Mahal*, *Malleshwaram*). It consistently yields >0.99 confidence on persons, locations, and organizations.
+- **Span Assembly**: The model returns WordPiece subword tokens (`##hul`, `##ity`, `##a`). [`src/lib/ml/ner.ts`](file:///Users/dheerajsrinivasa/Documents/essentials/VirtualDheeraj/src/lib/ml/ner.ts) implements [`reconstructWordSpans()`](file:///Users/dheerajsrinivasa/Documents/essentials/VirtualDheeraj/src/lib/ml/ner.ts#L22-L73) to deterministically reconstruct full named entity spans with max-pooled confidence scores.
+- **Limitations**: Classical NER models struggle with compound technical product codes (e.g., *Nikon Z50*, *Godox LC500R*, *SK400*). These are augmented by the subsequent semantic LLM pass, which retains world knowledge for acronyms and product naming.
 
-## 3. Explore Screen (Canvas 2D Rendering)
+### Sentiment Analysis
+- **Model Selected**: `Xenova/distilbert-base-uncased-finetuned-sst-2-english` (quantized ONNX, ~65MB).
+- **Measured Accuracy**: 60.0% accuracy on arbitrary personal diary entries in `BENCHMARKS.md`.
+- **Why Accuracy is 60% and Not 95%**: SST-2 is a binary sentiment classifier trained primarily on movie reviews. Diary entries often contain factual or neutral statements (e.g., *"Bought the Godox LC500R light stick for my indoor studio setup"*). Because SST-2 lacks an explicit neutral class, it forces a binary choice on non-polarized statements.
+- **Architectural Guardrail**: The classifier never overwrites what the user or the LLM decided. The LLM extraction remains authoritative for `facts` and `edges`, while the classifier score is stored in `entry_sentiment_scores` and surfaced in the UI as an auditable secondary signal.
 
-- **Single Full-Bleed Canvas**: All ambient particles (3,000 points) and entity nodes are drawn onto an HTML5 2D context at `devicePixelRatio` resolution.
-- **Camera Cover-Fit (Preventing Black Bands)**:
-  - Naive implementations use `contain-fit` (`scale = Math.min(...)`), which leaves empty black bands on tall phone viewports.
-  - We strictly use cover-fit: `scale = Math.max(viewportWidth / worldWidth, viewportHeight / worldHeight) * 1.3`.
-- **Viewport Drift Prevention**:
-  - Mobile Safari address bar expansion/collapse changes `window.visualViewport.height` without triggering a standard window resize event.
-  - The camera listens to `window.visualViewport.addEventListener('resize', ...)` and recomputes both canvas buffer dimensions and camera scale/centering simultaneously.
-- **HUD Safe Areas**:
-  - The HUD is a single unified floating card.
-  - Safe-area insets (`env(safe-area-inset-top)`, etc.) are applied directly to the HUD element's padding rather than `:root`, preventing overlapping stats on notched mobile screens.
-
----
-
-## 4. Hard Exclusion Recommendation Flow (`src/lib/recommendation.ts`)
-
-- For recommendation queries ("suggest a movie I haven't watched", "recommend a restaurant I haven't visited"):
-  1. The full consumed entity set is fetched via SQL.
-  2. The LLM suggests 15 candidate recommendations matching the user's recorded taste.
-  3. Candidates are strictly filtered in application code against normalized titles, aliases, and fuzzy matches.
-  4. Only verified unvisited items are returned, explicitly stating how many candidate items were dropped.
+### Cross-Encoder Precision Re-Ranking
+- **Model Selected**: `Xenova/ms-marco-MiniLM-L-6-v2` (quantized ONNX, ~22MB).
+- **Verified Runtime**: Successfully verified on Hugging Face and tested locally with `AutoTokenizer` and `AutoModelForSequenceClassification`.
+- **Score Calibration**: Because cross-encoders output unbounded logits ($z \in (-\infty, \infty)$), scores are mapped through a sigmoid transfer function $\sigma(z) = \frac{1}{1 + e^{-z}}$ to yield a well-behaved probability in $[0, 1]$.
+- **Measured Separation**: A relevant portrait lens document scores `+9.07` ($\sigma \approx 0.9998$), whereas an irrelevant food document scores `-11.25` ($\sigma \approx 0.000013$), providing clean ranking separation.
 
 ---
 
-## 5. Security, Auth, & Portability
+## 2. Vector Dimension Consistency
 
-- **Single User System**: Supabase Auth (Magic Link or Google OAuth). The README guides disabling public sign-ups once the owner account is created.
-- **Row Level Security (RLS)**: Enabled across all tables with `auth.uid() = user_id`.
-- **Storage & Secrets**: Service role keys and LLM keys remain strictly in server-side environment variables.
-- **Database Portability**: Supabase-specific queries are isolated inside `src/lib/db/*` and `src/lib/auth.ts`. The schema consists of standard SQL migrations (`001_init.sql`, `002_reviews.sql`).
-- **Supabase Free Pause Prevention**: `/api/keepalive` runs via Vercel Cron daily to execute `SELECT 1`.
-- **Automated Backups**: `/api/backup` runs weekly via Vercel Cron, dumping all tables to JSON and committing them to a private GitHub repository via GitHub REST API.
+- **Fixed Dimension**: All dense vector operations in this repo strictly use **384-dimensional** embeddings generated by `Xenova/all-MiniLM-L6-v2`.
+- **Taste Vectors**: The taste vector computed in [`src/lib/ml/taste-vector.ts`](file:///Users/dheerajsrinivasa/Documents/essentials/VirtualDheeraj/src/lib/ml/taste-vector.ts) is a 384-dimensional rating-weighted normalized centroid ($\vec{v}_{\text{taste}} = \frac{\sum r_i \vec{e}_i}{\|\sum r_i \vec{e}_i\|}$). It is never mixed with 1536-dim vectors.
+
+---
+
+## 3. Graph Community Detection (Louvain Method)
+
+- **Packages**: `graphology` and `graphology-communities-louvain` installed via npm (MIT license).
+- **Algorithm**: Implements Blondel et al.'s modularity optimization algorithm.
+- **Execution**: Runs nightly or on-demand via [`/api/cron/communities`](file:///Users/dheerajsrinivasa/Documents/essentials/VirtualDheeraj/src/app/api/cron/communities/route.ts). Reads active edges ($E \subseteq V \times V$), builds an undirected graph, runs modularity clustering, and writes community IDs and global modularity scores to `entity_communities`.
+
+---
+
+## 4. Additive Integration & Zero-Rewrite Principle
+
+All modifications strictly followed the additive constraint:
+1. **New Tables Only**: `entry_ner_spans`, `entry_sentiment_scores`, and `entity_communities` are defined in `supabase/migrations/027_ml_inspection_tables.sql`.
+2. **Untouched Core Tables**: No changes were made to `entries`, `entities`, `edges`, `facts`, or `entry_entities`.
+3. **Graceful Fallbacks**: All database writes to new tables include `try/catch` fallbacks, ensuring zero crashes on instances where migrations 004+ are not yet applied.
+4. **Hook Points**:
+   - Ingest route (`src/app/api/ingest/route.ts`): Added local NER and clause sentiment scoring at the entry point; merged NER span texts into candidate search; did not alter LLM prompts or schemas.
+   - Recommendation engine (`src/lib/recommendation.ts`): Re-ranks candidates by taste-vector cosine similarity before hard-exclusion filtering.
+   - GraphRAG engine (`src/lib/graphrag.ts`): Re-ranks retrieved seeds using the cross-encoder model before passing context to the LLM.
+   - Entity Profile UI (`src/components/explore/EntityProfileSheet.tsx`): Displays audited sentiment grounding badges alongside stored facts.

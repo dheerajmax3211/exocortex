@@ -24,11 +24,27 @@ export async function GET(
     const edges = await db.getEdgesForEntity(supabase, id);
     const entries = await db.getEntriesForEntity(supabase, id);
 
+    let sentimentScores: any[] = [];
+    const entryIds = (entries || []).map((e: any) => e.id);
+    if (entryIds.length > 0) {
+      try {
+        const { data: scores } = await supabase
+          .from('entry_sentiment_scores')
+          .select('clause, label, score')
+          .in('entry_id', entryIds)
+          .limit(6);
+        sentimentScores = scores || [];
+      } catch {
+        // Graceful fallback if migration 027 not yet applied
+      }
+    }
+
     return NextResponse.json({
       entity,
       facts: facts || [],
       edges: edges || [],
-      entries: entries || []
+      entries: entries || [],
+      sentiment_scores: sentimentScores
     });
   } catch (error: any) {
     console.error('Entity GET error:', error);

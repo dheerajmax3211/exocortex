@@ -96,7 +96,25 @@ Suggest 15 varied, well-regarded ${entityType}s tailored to this taste.`;
       temperature: 0.7
     });
 
-    const candidates = response.candidates || [];
+    let candidates = response.candidates || [];
+
+    // Re-rank candidates by taste-vector cosine similarity before exclusion filtering
+    try {
+      const { computeCategoryTasteVector, rerankByTasteVector } = await import('./ml/taste-vector');
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && entityType) {
+        const tasteVec = await computeCategoryTasteVector(supabase, user.id, entityType);
+        if (tasteVec) {
+          const reranked = await rerankByTasteVector(
+            candidates.map(c => ({ ...c, name: c.title })),
+            tasteVec
+          );
+          candidates = reranked.map(r => r.item);
+        }
+      }
+    } catch (tasteErr) {
+      console.warn('[recommendation] Taste-vector rerank skipped:', tasteErr);
+    }
 
     // 3. Filter candidates in code against consumed set
     for (const cand of candidates) {

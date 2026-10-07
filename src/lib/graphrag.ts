@@ -43,7 +43,7 @@ export async function executeHybridGraphRAG(
       return await executeFallbackSearch(query, supabase, startTime);
     }
 
-    const seeds = data.seeds || [];
+    let seeds = data.seeds || [];
     const seedIds = seeds.map((s: any) => s.id);
     let facts = data.facts || [];
 
@@ -59,6 +59,21 @@ export async function executeHybridGraphRAG(
       if (seedFacts && seedFacts.length > 0) {
         const seedFactIds = new Set(seedFacts.map(f => f.id));
         facts = [...seedFacts, ...facts.filter((f: any) => !seedFactIds.has(f.id))];
+      }
+    }
+
+    // Cross-encoder precision rerank on retrieved seeds against literal query
+    if (seeds.length > 2) {
+      try {
+        const { rerankCandidates } = await import('./ml/rerank');
+        const reranked = await rerankCandidates(
+          query,
+          seeds,
+          (s: any) => `${s.name} (${s.type || ''}): ${s.summary || ''}`
+        );
+        seeds = reranked.map(r => r.item);
+      } catch (rerankErr) {
+        console.warn('[executeHybridGraphRAG] Cross-encoder rerank skipped:', rerankErr);
       }
     }
 
@@ -136,6 +151,21 @@ async function executeFallbackSearch(
       .in('entity_id', seedIds)
       .limit(20);
     facts = factData || [];
+  }
+
+  // Cross-encoder precision rerank on fallback seeds against literal query
+  if (seeds.length > 2) {
+    try {
+      const { rerankCandidates } = await import('./ml/rerank');
+      const reranked = await rerankCandidates(
+        query,
+        seeds,
+        (s: any) => `${s.name} (${s.type || ''}): ${s.summary || ''}`
+      );
+      seeds = reranked.map(r => r.item);
+    } catch (rerankErr) {
+      console.warn('[executeFallbackSearch] Cross-encoder rerank skipped:', rerankErr);
+    }
   }
 
   return {

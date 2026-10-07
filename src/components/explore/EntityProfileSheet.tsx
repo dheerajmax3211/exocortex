@@ -113,6 +113,27 @@ export default function EntityProfileSheet({ entityId, isOpen, onClose }: Entity
               </section>
             )}
 
+            {/* Model-Audited Sentiment Grounding */}
+            {data?.sentiment_scores && data.sentiment_scores.length > 0 && (
+              <section className="space-y-2">
+                <h3 className="text-xs font-mono uppercase tracking-wider text-white/60">
+                  ML Sentiment Grounding (Audited Evidence)
+                </h3>
+                <div className="space-y-1.5">
+                  {data.sentiment_scores.map((s: any, idx: number) => (
+                    <div key={idx} className="bg-white/5 border border-white/10 rounded-lg p-2.5 text-xs flex items-center justify-between gap-3">
+                      <span className="text-white/80 italic truncate">"{s.clause}"</span>
+                      <span className={`px-2 py-0.5 rounded font-mono font-medium shrink-0 ${
+                        s.label === 'POSITIVE' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                      }`}>
+                        {(s.score * 100).toFixed(1)}% {s.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
             {/* Connections */}
             {edges.length > 0 && (
               <section className="space-y-2">
