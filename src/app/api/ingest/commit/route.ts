@@ -1,11 +1,15 @@
+import { ServerTiming } from "@/lib/server/timing";
 import { NextResponse, after } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { predictMissingLinks } from '@/lib/gnn-topology';
 import * as db from '@/lib/db';
 import { placeNewEntity } from '@/lib/graph/layout';
+import { isDomainHubName } from '@/lib/graph-hierarchy';
+import { resolveEntitiesBatch, generateClarificationQuestions } from '@/lib/entity-resolution';
 
 export async function POST(req: Request) {
+  const timing = new ServerTiming();
   try {
+    timing.start('total_commit');
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -20,12 +24,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'entry_id is required' }, { status: 400 });
     }
 
+    timing.start('entity_resolution');
     const meEntity = await db.getOrCreateMeEntity(supabase, user.id);
     const entityIdMap: Record<string, string> = {
       me: meEntity.id,
       Me: meEntity.id,
       ME: meEntity.id
-    }; 
+    };
     if (meEntity.name) {
       entityIdMap[meEntity.name.toLowerCase()] = meEntity.id;
     }
@@ -33,22 +38,50 @@ export async function POST(req: Request) {
       entityIdMap[a.toLowerCase()] = meEntity.id;
     }
 
-    const createdEntities = [];
+    const createdEntities: string[] = [];
 
-    // Fetch existing entities in graph for entity resolution guard (include embedding for vector matching)
+    // Fetch existing entities in graph for resolution
     const { data: dbEntities } = await supabase
       .from('entities')
-      .select('id, name, type, aliases, summary, props, start_date, end_date, embedding')
+      .select('id, name, type, aliases, summary, props, start_date, end_date')
       .eq('user_id', user.id)
       .is('deleted_at', null);
 
     const activeEntities: any[] = [...(dbEntities || [])];
-    const { resolveEntityMatch } = await import('@/lib/entity-resolution');
 
-    // 1. Process entities with intelligent resolution
+    const ambiguousMatches: any[] = [];
+    const clarificationQuestions: string[] = [];
+
+    // Pre-resolve batch entities
+    const entitiesToResolve = (entities || []).filter((ent: any) => {
+      const isMe =
+        ent.temp_id?.toLowerCase() === 'me' ||
+        ent.name?.toLowerCase() === 'me' ||
+        ent.name?.toLowerCase() === meEntity.name?.toLowerCase() ||
+        (meEntity.aliases || []).some((a: string) => a.toLowerCase() === ent.name?.toLowerCase()) ||
+        ent.match?.existing_id === meEntity.id;
+
+      const modelMatchId = ent.match?.existing_id;
+      const hasValidModelMatch = modelMatchId && ent.match?.confidence && ent.match.confidence > 0.8 && activeEntities.some(e =>
+        e.id === modelMatchId && (!ent.type || e.type === ent.type)
+      );
+
+      return !isMe && !hasValidModelMatch;
+    });
+
+    const batchResults = resolveEntitiesBatch(
+      entitiesToResolve,
+      edges || [],
+      activeEntities
+    );
+
+    const newEntitiesToInsert: any[] = [];
+    const entityUpdates: any[] = [];
+
+    // 1. Process entities
     for (const ent of entities || []) {
-      const isMe = 
-        ent.temp_id?.toLowerCase() === 'me' || 
+      const isMe =
+        ent.temp_id?.toLowerCase() === 'me' ||
         ent.name?.toLowerCase() === 'me' ||
         ent.name?.toLowerCase() === meEntity.name?.toLowerCase() ||
         (meEntity.aliases || []).some(a => a.toLowerCase() === ent.name?.toLowerCase()) ||
@@ -67,34 +100,36 @@ export async function POST(req: Request) {
           updates.props = { ...(meEntity.props || {}), is_user: true, ...ent.props };
         }
         if (Object.keys(updates).length > 0) {
-          await db.updateEntity(supabase, meEntity.id, updates);
+          entityUpdates.push({ id: meEntity.id, props: updates });
         }
         continue;
       }
 
-      // Check if LLM matched it or resolve via Entity Resolution algorithm
       let matchedExistingId: string | null = null;
       let matchedExistingEntity: any = null;
-
-      // Compute embedding upfront so both vector matching AND entity creation can use it
-      const { getEmbedding } = await import('@/lib/embeddings');
-      const entEmbedding = await getEmbedding(`${ent.name} (${ent.type}): ${ent.summary || ''} ${JSON.stringify(ent.props || {})}`);
 
       if (ent.match?.existing_id && ent.match.confidence > 0.8) {
         matchedExistingId = ent.match.existing_id;
         matchedExistingEntity = activeEntities.find(e => e.id === matchedExistingId);
       } else {
-        // Pass embedding into resolution so Stage 4 (vector cosine) can fire
-        const resolution = resolveEntityMatch({ ...ent, embedding: entEmbedding }, activeEntities);
-        if (resolution && resolution.confidence >= 0.85) {
-          matchedExistingId = resolution.matchedId;
-          matchedExistingEntity = resolution.existingEntity;
+        const resolution = batchResults[ent.temp_id];
+        if (resolution) {
+          if (resolution.matchType === 'ambiguous') {
+            ambiguousMatches.push({
+              temp_id: ent.temp_id,
+              entity: ent,
+              candidates: resolution.ambiguousCandidates
+            });
+            clarificationQuestions.push(...generateClarificationQuestions(resolution));
+          } else if (resolution.confidence >= 0.85) {
+            matchedExistingId = resolution.matchedId;
+            matchedExistingEntity = resolution.existingEntity;
+          }
         }
       }
 
       if (matchedExistingId) {
         entityIdMap[ent.temp_id] = matchedExistingId;
-        // Update existing entity with any new properties or date information
         const updates: any = {};
         if (ent.props && Object.keys(ent.props).length > 0) {
           updates.props = { ...(matchedExistingEntity?.props || {}), ...ent.props };
@@ -112,32 +147,31 @@ export async function POST(req: Request) {
           updates.end_date = ent.props.end_date;
         }
         if (Object.keys(updates).length > 0) {
-          await db.updateEntity(supabase, matchedExistingId, updates);
+          entityUpdates.push({ id: matchedExistingId, props: updates });
         }
       } else {
-        const newEnt = await db.createEntity(supabase, {
+        const newId = crypto.randomUUID();
+        entityIdMap[ent.temp_id] = newId;
+        createdEntities.push(newId);
+
+        const newRecord = {
+          id: newId,
           user_id: user.id,
           type: ent.type,
           name: ent.name,
           aliases: ent.aliases || [],
           summary: ent.summary || null,
           props: ent.props || {},
-          created_from_entry: entry_id,
-          embedding: entEmbedding
-        } as any);
-        
-        if (newEnt) {
-          entityIdMap[ent.temp_id] = newEnt.id;
-          createdEntities.push(newEnt.id);
-          activeEntities.push(newEnt);
-        }
+          created_from_entry: entry_id
+        };
+        newEntitiesToInsert.push(newRecord);
+        activeEntities.push(newRecord);
       }
     }
+    timing.end('entity_resolution');
 
-    // 2. Process edges with bi-temporal versioning & Anti-Bypass Guard
-    const { isDomainHubName } = await import('@/lib/graph-hierarchy');
-
-    // Build set of entities that already have parents or incoming relations from other entities
+    // 2. Process edges with Anti-Bypass Guard
+    timing.start('graph_commit');
     const entitiesWithParents = new Set<string>();
     for (const edge of edges || []) {
       const s = entityIdMap[edge.src_temp_id];
@@ -158,6 +192,9 @@ export async function POST(req: Request) {
       return false;
     };
 
+    const edgeWrites: any[] = [];
+    const bypassFacts: any[] = [];
+
     for (const edge of edges || []) {
       const srcId = entityIdMap[edge.src_temp_id];
       const dstId = entityIdMap[edge.dst_temp_id];
@@ -168,10 +205,9 @@ export async function POST(req: Request) {
         const otherId = srcId === meEntity.id ? dstId : srcId;
         const otherEntity = activeEntities.find(e => e.id === otherId);
 
-        // If the other entity is nested or not a permitted root anchor, PRUNE direct edge and save fact!
         if (otherEntity && (entitiesWithParents.has(otherId) || !isPermittedRootAnchor(otherEntity))) {
           if (edge.relation && !['explores', 'passionate_about', 'aiming_for', 'has_preference', 'enjoys', 'trains', 'works_in', 'manages', 'travels_to', 'reflected_on'].includes(edge.relation)) {
-            await db.createFact(supabase, {
+            bypassFacts.push({
               user_id: user.id,
               entity_id: otherId,
               key: 'status',
@@ -179,12 +215,11 @@ export async function POST(req: Request) {
               entry_id: entry_id
             });
           }
-          // Reject bypass spoke to root user!
           continue;
         }
       }
 
-      await db.createEdge(supabase, {
+      edgeWrites.push({
         user_id: user.id,
         src: srcId,
         dst: dstId,
@@ -194,78 +229,116 @@ export async function POST(req: Request) {
         occurred_on: event_date || null,
         valid_from: event_date || null,
         learned_at: new Date().toISOString()
-      } as any);
+      });
     }
 
-    
-        
-
     // 3. Process facts
+    const factWrites: any[] = [...bypassFacts];
     for (const fact of facts || []) {
       const entityId = entityIdMap[fact.entity_temp_id];
       if (entityId) {
-        await db.createFact(supabase, {
+        factWrites.push({
           user_id: user.id,
           entity_id: entityId,
           key: fact.key,
           value: fact.value,
-          entry_id: entry_id
+          entry_id: entry_id,
+          valid_from: fact.valid_from || event_date || null,
+          valid_time_start: fact.valid_time_start || null,
+          valid_time_precision: fact.valid_time_precision || 'unknown',
+          supersedes_fact_id: fact.supersedes_fact_id || null
         });
       }
     }
 
     // 4. Link entry_entities
     const uniqueEntityIds = Array.from(new Set(Object.values(entityIdMap).filter(Boolean)));
-    for (const realId of uniqueEntityIds) {
-      await db.linkEntryEntity(supabase, {
-        entry_id: entry_id,
-        entity_id: realId
-      }).catch(e => console.log('Already linked:', e.message));
-    }
-
-    // Link events to Me if event_date provided
     if (event_date && !uniqueEntityIds.includes(meEntity.id)) {
-      await db.linkEntryEntity(supabase, {
-        entry_id: entry_id,
-        entity_id: meEntity.id
-      }).catch(e => console.log('Already linked to Me', e.message));
+      uniqueEntityIds.push(meEntity.id);
     }
 
-    // 5. Update entry status
-    await db.updateEntry(supabase, entry_id, {
-      status: 'committed',
-      event_date: event_date || null
-    });
+    const junctionWrites = uniqueEntityIds.map(realId => ({
+      entry_id: entry_id,
+      entity_id: realId
+    }));
 
-    // 6. Update graph layout for new entities
-    for (const newId of createdEntities) {
-      try {
-        const newEdges = (edges || []).filter((e: any) => 
-          entityIdMap[e.src_temp_id] === newId || entityIdMap[e.dst_temp_id] === newId
-        ).map((e: any) => ({
-          src: entityIdMap[e.src_temp_id],
-          dst: entityIdMap[e.dst_temp_id]
-        }));
-        
-        await placeNewEntity(supabase, newId, newEdges, user.id);
-      } catch (e) {
-        console.error('Layout update failed for', newId, e);
-      }
-    }
+    // BATCH DATABASE WRITES (parallel, minimal network round-trips)
+    await Promise.all([
+      newEntitiesToInsert.length > 0
+        ? supabase.from('entities').insert(newEntitiesToInsert)
+        : Promise.resolve({ error: null }),
+      edgeWrites.length > 0
+        ? supabase.from('edges').insert(edgeWrites)
+        : Promise.resolve({ error: null }),
+      factWrites.length > 0
+        ? supabase.from('facts').insert(factWrites)
+        : Promise.resolve({ error: null }),
+      junctionWrites.length > 0
+        ? supabase.from('entry_entities').upsert(junctionWrites, { onConflict: 'entry_id, entity_id', ignoreDuplicates: true })
+        : Promise.resolve({ error: null }),
+      ...entityUpdates.map(u =>
+        supabase.from('entities').update(u.props).eq('id', u.id).eq('user_id', user.id)
+      ),
+      supabase.from('entries').update({
+        status: 'committed',
+        event_date: event_date || null
+      }).eq('id', entry_id).eq('user_id', user.id)
+    ]);
 
-    // 7. Update cognitive clusters / living themes in background
+    timing.end('graph_commit');
+    timing.end('total_commit');
+
+    // 5. Enrichment in background: embeddings, force-layout, clusters, alter-ego synthesis
     after(async () => {
+      // Background embedding generation for new entities
+      if (newEntitiesToInsert.length > 0) {
+        try {
+          const { getEmbedding } = await import('@/lib/embeddings');
+          await Promise.all(newEntitiesToInsert.map(async ent => {
+            try {
+              const embedding = await getEmbedding(`${ent.name} (${ent.type}): ${ent.summary || ''}`);
+              await supabase.from('entities').update({ embedding }).eq('id', ent.id).eq('user_id', user.id);
+            } catch (err) {
+              console.warn('Background embedding update failed for', ent.name, err);
+            }
+          }));
+        } catch (e) {
+          console.warn('Embedding module import error:', e);
+        }
+      }
+
+      // Background force layout
+      for (const newId of createdEntities) {
+        try {
+          const newEdges = (edges || []).filter((e: any) =>
+            entityIdMap[e.src_temp_id] === newId || entityIdMap[e.dst_temp_id] === newId
+          ).map((e: any) => ({
+            src: entityIdMap[e.src_temp_id],
+            dst: entityIdMap[e.dst_temp_id]
+          }));
+          await placeNewEntity(supabase, newId, newEdges, user.id);
+        } catch (e) {
+          console.warn('Background layout placement failed for', newId, e);
+        }
+      }
+
+      // Background cognitive clustering
       const { updateCognitiveClusters } = await import('@/lib/community-clustering');
       await updateCognitiveClusters(supabase, user.id).catch(e => console.warn('Cluster update err:', e));
-    });
 
-    // 8. Autonomous Subconscious Synthesis (Life Vectors & Cognitive Tensions)
-    after(async () => {
+      // Background subconscious alter-ego synthesis
       const { runSubconsciousSynthesis } = await import('@/lib/subconscious-engine');
       await runSubconsciousSynthesis(supabase, user.id).catch(e => console.warn('Subconscious synthesis err:', e));
     });
 
-    return NextResponse.json({ success: true, createdEntities });
+    const res = NextResponse.json({
+      success: true,
+      createdEntities,
+      ambiguousMatches,
+      clarificationQuestions
+    });
+    res.headers.set("Server-Timing", timing.getHeader());
+    return res;
   } catch (error: any) {
     console.error('Commit error:', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });

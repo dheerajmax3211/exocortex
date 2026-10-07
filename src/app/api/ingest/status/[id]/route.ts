@@ -3,29 +3,30 @@ import { createClient } from '@/lib/supabase/server';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const resolvedParams = await params;
     const entryId = resolvedParams.id;
     if (!entryId) {
       return NextResponse.json({ error: 'Entry ID is required' }, { status: 400 });
     }
 
-    // 1. Check in-memory extraction cache first
+    // 1. Check in-memory extraction cache first (fast path, zero network overhead)
     const cache = (globalThis as any).__extractionCache;
-    const cached = cache?.get(entryId);
+    const cached = cache ? (typeof cache.get === 'function' ? cache.get(entryId) : cache[entryId]) : null;
     if (cached) {
       return NextResponse.json({
         status: cached.status,
         extraction: cached.extraction || null,
         candidates: cached.candidates || null,
+        timings: cached.timings || null,
         error: cached.error || null
       });
+    }
+
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // 2. Query entries table without selecting non-existent props

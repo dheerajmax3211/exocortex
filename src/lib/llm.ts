@@ -31,6 +31,7 @@ interface ChatJSONOptions<T> {
   system: string;
   prompt: string;
   schema: ZodSchema<T>;
+  schemaDescription?: string;
   temperature?: number;
 }
 
@@ -59,12 +60,80 @@ function getEnvConfig() {
 
 function cleanJSON(text: string): string {
   let cleaned = text.trim();
-  if (cleaned.startsWith('```json')) {
-    cleaned = cleaned.replace(/^```json\n?/, '').replace(/\n?```$/, '');
-  } else if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```\n?/, '').replace(/\n?```$/, '');
+  // Strip <think>...</think> if emitted by reasoning models
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  // Extract from markdown ```json ... ``` blocks if present
+  const jsonBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (jsonBlockMatch) {
+    return jsonBlockMatch[1].trim();
   }
+
+  // Extract between first { and last }
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    return cleaned.slice(firstBrace, lastBrace + 1).trim();
+  } else if (firstBrace !== -1) {
+    return cleaned.slice(firstBrace).trim();
+  }
+
   return cleaned;
+}
+
+function repairJSON(text: string): string {
+  let s = cleanJSON(text);
+
+  let inString = false;
+  let escape = false;
+  const stack: string[] = [];
+
+  for (let i = 0; i < s.length; i++) {
+    const char = s[i];
+    if (escape) { escape = false; continue; }
+    if (char === '\\') { escape = true; continue; }
+    if (char === '"') { inString = !inString; continue; }
+    if (!inString) {
+      if (char === '{' || char === '[') {
+        stack.push(char === '{' ? '}' : ']');
+      } else if (char === '}' || char === ']') {
+        if (stack.length > 0 && stack[stack.length - 1] === char) {
+          stack.pop();
+        }
+      }
+    }
+  }
+
+  if (inString) s += '"';
+  s = s.replace(/,\s*$/, '');
+  s = s.replace(/:\s*$/, ': null');
+  s = s.replace(/,\s*"[^"]*"\s*:\s*$/, '');
+  s = s.replace(/,\s*\{[^}]*$/, '');
+
+  const finalStack: string[] = [];
+  inString = false;
+  escape = false;
+  for (let i = 0; i < s.length; i++) {
+    const char = s[i];
+    if (escape) { escape = false; continue; }
+    if (char === '\\') { escape = true; continue; }
+    if (char === '"') { inString = !inString; continue; }
+    if (!inString) {
+      if (char === '{' || char === '[') {
+        finalStack.push(char === '{' ? '}' : ']');
+      } else if (char === '}' || char === ']') {
+        if (finalStack.length > 0 && finalStack[finalStack.length - 1] === char) {
+          finalStack.pop();
+        }
+      }
+    }
+  }
+
+  if (inString) s += '"';
+  while (finalStack.length > 0) {
+    s += finalStack.pop();
+  }
+  return s;
 }
 
 function parseDSMLToolCalls(content: string): { toolCalls: { id: string, name: string, args: Record<string, any> }[], cleanContent: string } {
@@ -201,17 +270,63 @@ async function runCommandCodeCompletion(messages: Message[], system: string, too
   return response;
 }
 
-export async function chatJSON<T>({ system, prompt, schema, temperature = 0 }: ChatJSONOptions<T>): Promise<T> {
+export function zodToCleanShape(val: any): any {
+  if (!val) return "any";
+  if (typeof val !== "object") return String(val);
+  const def = val._def || val.def;
+  if (!def) return "any";
+  const type = def.typeName || def.type;
+  if (type === "ZodString" || type === "string") {
+    return def.description ? `string (${def.description})` : "string";
+  }
+  if (type === "ZodNumber" || type === "number") return "number";
+  if (type === "ZodBoolean" || type === "boolean") return "boolean";
+  if (type === "ZodEnum" || type === "enum") {
+    const vals = def.values || (def.entries ? Object.keys(def.entries) : []);
+    return vals.join(" | ");
+  }
+  if (type === "ZodArray" || type === "array") {
+    const el = def.element || def.type || def.innerType;
+    return [zodToCleanShape(el)];
+  }
+  if (type === "ZodNullable" || type === "nullable") {
+    const inner = def.innerType || def.schema || def.element;
+    const res = zodToCleanShape(inner);
+    return typeof res === "object" ? res : `${res} | null`;
+  }
+  if (type === "ZodOptional" || type === "optional") {
+    const inner = def.innerType || def.schema || def.element;
+    const res = zodToCleanShape(inner);
+    return typeof res === "object" ? res : `${res} (optional)`;
+  }
+  if (type === "ZodDefault" || type === "default") {
+    const inner = def.innerType || def.schema || def.element;
+    return zodToCleanShape(inner);
+  }
+  if (type === "ZodRecord" || type === "record") return "{ [key: string]: any }";
+  if (type === "ZodObject" || type === "object") {
+    const shape = typeof def.shape === "function" ? def.shape() : (val.shape || def.shape);
+    const res: Record<string, any> = {};
+    for (const [k, v] of Object.entries(shape || {})) {
+      res[k] = zodToCleanShape(v);
+    }
+    return res;
+  }
+  return "any";
+}
+
+export async function chatJSON<T>({ system, prompt, schema, schemaDescription, temperature = 0 }: ChatJSONOptions<T>): Promise<T> {
   const { provider, baseUrl, apiKey, model } = getEnvConfig();
 
-  const systemPrompt = `${system}\n\nYou must output a valid JSON object matching this schema:\n${JSON.stringify(schema, null, 2)}\nDo not include markdown blocks, just the raw JSON string.`;
+  const schemaShape = schemaDescription || JSON.stringify(zodToCleanShape(schema), null, 2);
+  const systemPrompt = `${system}\n\nYou must output a valid JSON object matching this schema:\n${schemaShape}\nDo not include markdown blocks, just the raw JSON string.`;
 
   let attempt = 0;
   let currentPrompt = prompt;
 
   while (attempt < 2) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 90000);
+    const timeout = setTimeout(() => controller.abort(), 180000);
 
     try {
       let content = '';
@@ -271,8 +386,20 @@ export async function chatJSON<T>({ system, prompt, schema, temperature = 0 }: C
 
       if (!content) throw new Error("Empty response from LLM");
 
-      const jsonString = cleanJSON(content);
-      const parsed = JSON.parse(jsonString);
+      let parsed: any;
+      try {
+        const jsonString = cleanJSON(content);
+        parsed = JSON.parse(jsonString);
+      } catch (parseErr) {
+        try {
+          const repaired = repairJSON(content);
+          parsed = JSON.parse(repaired);
+          console.warn('[chatJSON] Successfully parsed repaired/recovered JSON from model output');
+        } catch (repairErr) {
+          console.error('[chatJSON] Failed to parse JSON even after repair attempt. Output snippet:', content.slice(0, 300) + '...' + content.slice(-300));
+          throw parseErr;
+        }
+      }
 
       const validation = schema.safeParse(parsed);
       if (validation.success) {
@@ -287,9 +414,9 @@ export async function chatJSON<T>({ system, prompt, schema, temperature = 0 }: C
       }
     } catch (e: any) {
       clearTimeout(timeout);
-      if (attempt === 0 && e.name === 'SyntaxError') {
+      if (attempt === 0 && (e.name === 'SyntaxError' || e.name === 'AbortError' || e.message?.includes('network'))) {
         attempt++;
-        currentPrompt = `${prompt}\n\nYour previous response was not valid JSON. Fix the syntax.`;
+        currentPrompt = `${prompt}\n\nPlease output valid, compact JSON. Avoid markdown commentary and ensure all strings and braces are properly closed.`;
         continue;
       }
       console.error("[chatJSON error]", e);

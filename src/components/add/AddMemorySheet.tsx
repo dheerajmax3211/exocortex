@@ -72,7 +72,8 @@ export default function AddMemorySheet({ isOpen, onClose }: AddMemorySheetProps)
       })
       
       if (!res.ok) {
-        throw new Error('Failed to ingest memory')
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to ingest memory');
       }
       
       let data = await res.json()
@@ -80,14 +81,36 @@ export default function AddMemorySheet({ isOpen, onClose }: AddMemorySheetProps)
       if (res.status === 202) {
         setIsPolling(true)
         let step = 0
-        while (true) {
+        let consecutiveErrors = 0
+        const maxPolls = 120
+        let pollCount = 0
+
+        while (pollCount < maxPolls) {
+          pollCount++
           step++
           if (step > 3) step = 3
           setPollStep(step)
           await new Promise(r => setTimeout(r, 1000))
           
-          const statusRes = await fetch(`/api/ingest/status/${data.entry_id}`)
-          if (!statusRes.ok) throw new Error('Failed to check status')
+          let statusRes
+          try {
+            statusRes = await fetch(`/api/ingest/status/${data.entry_id}`)
+          } catch {
+            consecutiveErrors++
+            if (consecutiveErrors > 6) throw new Error('Network error checking extraction status')
+            continue
+          }
+
+          if (!statusRes.ok) {
+            consecutiveErrors++
+            if (consecutiveErrors > 6) {
+              const errJson = await statusRes.json().catch(() => ({}))
+              throw new Error(errJson.error || 'Failed to check status')
+            }
+            continue
+          }
+          consecutiveErrors = 0
+
           const statusData = await statusRes.json()
           
           if (statusData.status === 'ready' || statusData.status === 'draft') {
@@ -97,9 +120,13 @@ export default function AddMemorySheet({ isOpen, onClose }: AddMemorySheetProps)
               candidates: statusData.candidates || statusData.props?.candidates
             }
             break
-          } else if (statusData.status === 'error') {
+          } else if (statusData.status === 'error' || statusData.status === 'failed') {
             throw new Error(statusData.error || 'Extraction failed')
           }
+        }
+
+        if (pollCount >= maxPolls) {
+          throw new Error('Extraction timed out. Memory was saved to drafts.')
         }
         setIsPolling(false)
       }

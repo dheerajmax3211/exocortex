@@ -4,9 +4,15 @@ import { createClient } from '@/lib/supabase/server';
 import { chatJSON } from '@/lib/llm';
 import { stringSimilarity } from '@/lib/entity-resolution';
 import { z } from 'zod';
+import { enqueueExtraction, completeJob } from '@/lib/server/extraction-queue';
+import { ServerTiming } from '@/lib/server/timing';
 
 const extractionSchema = z.object({
   event_date: z.string().nullable().describe("YYYY-MM-DD date if this relates to a specific day, else null"),
+  event_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional()
+    .describe('Exact local event time as HH:mm only when explicitly exact or clearly implied by “now”; use null for approximate times.'),
+  event_time_precision: z.enum(['exact', 'approximate', 'unknown']).default('unknown')
+    .describe('Whether the event time is exact, approximate, or unknown. Approximate times must not be returned in event_time.'),
   date_end: z.string().nullable(),
   date_precision: z.enum(['day', 'month', 'year', 'period', 'unknown']).default('unknown'),
   entities: z.array(z.object({
@@ -15,6 +21,7 @@ const extractionSchema = z.object({
     name: z.string(),
     aliases: z.array(z.string()).default([]),
     summary: z.string().nullable().optional(),
+    parent_context_temp_id: z.string().nullable().optional(),
     props: z.record(z.string(), z.any()).default({}),
     match: z.object({
       existing_id: z.string().nullable(),
@@ -31,7 +38,12 @@ const extractionSchema = z.object({
   facts: z.array(z.object({
     entity_temp_id: z.string(),
     key: z.string(),
-    value: z.string()
+    value: z.string(),
+    valid_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    valid_time_start: z.string().datetime({ offset: true }).nullable().optional(),
+    valid_time_precision: z.enum(['exact', 'approximate', 'date_only', 'unknown']).default('unknown')
+      .describe('Precision of the stated fact time. If approximate or date_only, valid_time_start must be null.'),
+    supersedes_fact_id: z.string().uuid().nullable().optional()
   })),
   event: z.object({
     name: z.string(),
@@ -40,7 +52,42 @@ const extractionSchema = z.object({
   questions: z.array(z.string()).default([])
 });
 
-function chunkText(text: string, maxChunkSize = 7000): string[] {
+const EXTRACTION_SCHEMA_DESC = `{
+  "event_date": "YYYY-MM-DD or null",
+  "event_time": "HH:mm (exact local time only) or null",
+  "event_time_precision": "exact | approximate | unknown",
+  "date_end": "YYYY-MM-DD or null",
+  "date_precision": "day | month | year | period | unknown",
+  "entities": [
+    {
+      "temp_id": "string ('me' for root user)",
+      "type": "person | place | restaurant | dish | movie | show | book | school | org | period | event | item | other",
+      "name": "Full canonical name",
+      "aliases": ["string"],
+      "summary": "1-sentence summary or null",
+      "props": {},
+      "match": { "existing_id": "uuid or null", "confidence": 1.0 }
+    }
+  ],
+  "edges": [
+    { "src_temp_id": "string", "dst_temp_id": "string", "relation": "string", "props": {} }
+  ],
+  "facts": [
+    {
+      "entity_temp_id": "string",
+      "key": "string",
+      "value": "string",
+      "valid_from": "YYYY-MM-DD or null",
+      "valid_time_start": "ISO string or null",
+      "valid_time_precision": "exact | approximate | date_only | unknown",
+      "supersedes_fact_id": "uuid or null"
+    }
+  ],
+  "event": { "name": "string", "summary": "string" },
+  "questions": []
+}`;
+
+function chunkText(text: string, maxChunkSize = 2500): string[] {
   if (text.length <= maxChunkSize) return [text];
   const paragraphs = text.split(/\n+/).filter(p => p.trim().length > 0);
   if (paragraphs.length === 0) return [text];
@@ -62,13 +109,35 @@ function chunkText(text: string, maxChunkSize = 7000): string[] {
   return chunks;
 }
 
+function cacheSet(entryId: string, value: any) {
+  if (!(globalThis as any).__extractionCache || typeof (globalThis as any).__extractionCache.set !== 'function') {
+    (globalThis as any).__extractionCache = new Map();
+  }
+  (globalThis as any).__extractionCache.set(entryId, value);
+}
+
 export async function POST(req: Request) {
+  const timing = new ServerTiming();
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    let { data: { user } } = await supabase.auth.getUser();
+
+    const isCron = req.headers.get('authorization') === `Bearer ${process.env.CRON_SECRET}`;
+
+    if (!user && !isCron) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!user && isCron) {
+      // For cron jobs, we need the user_id from the payload to act on their behalf
+      const body = await req.clone().json().catch(() => ({}));
+      if (body.user_id) {
+        user = { id: body.user_id } as any;
+      }
+    }
 
     if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized or missing user_id' }, { status: 401 });
     }
 
     const { text, source } = await req.json();
@@ -97,37 +166,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Failed to save raw entry' }, { status: 500 });
     }
 
-    const extractionCache = (globalThis as any).__extractionCache || ((globalThis as any).__extractionCache = new Map());
     if (isAsync) {
-      extractionCache.set(entry.id, { status: 'extracting' });
+      await enqueueExtraction(supabase, entry.id, user.id);
+      cacheSet(entry.id, { status: 'extracting' });
     }
 
     const extractionTask = async () => {
       try {
-        // We need a fresh client for background tasks if running async, but createClient in nextjs 
+        // We need a fresh client for background tasks if running async, but createClient in nextjs
         // uses cookies which might not be accessible in background context after response.
         // For simplicity we will use the same supabase client, though in Edge/Vercel it might fail.
         // Actually, we can just use the provided client since it's a standard serverless function.
-        
+
         // 2. Comprehensive Graph Taxonomy & Candidate Retrieval
         const { retrieveHighRecallCandidates } = await import('@/lib/entity-resolution');
         const { getOrCreateMeEntity } = await import('@/lib/db');
         const me = await getOrCreateMeEntity(supabase, user.id);
 
-        // Fetch all active entities (up to 200) to give LLM complete taxonomy visibility
-        const { data: allUserEntities } = await supabase
-          .from('entities')
-          .select('id, name, type, aliases, summary, props')
-          .eq('user_id', user.id)
-          .is('deleted_at', null)
-          .limit(200);
-
+        // Fetch high-recall candidates bounded to 25 to optimize latency and prompt tokens
         const highRecall = await retrieveHighRecallCandidates(supabase, user.id, text);
         const candidateMap = new Map<string, any>();
-        for (const e of allUserEntities || []) {
-          candidateMap.set(e.id, e);
-        }
-        for (const h of highRecall) {
+        for (const h of highRecall.slice(0, 24)) {
           candidateMap.set(h.id, h);
         }
 
@@ -152,184 +211,82 @@ export async function POST(req: Request) {
         const currentIst = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
         const currentDay = new Date().toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'Asia/Kolkata' });
 
-        const systemPrompt = `You are the knowledge graph extraction and reasoning engine for Virtual Brain (a personal memory and life operating system).
-Current Time in IST: ${currentIst} (${currentDay}).
+        const systemPrompt = `You are the knowledge graph extraction engine for Virtual Brain.
+Current Date & Time in IST: ${currentIst} (${currentDay}).
 
-ROOT USER IDENTITY (CRITICAL):
-- The author/owner of this brain is: "${me.name}" (ID: "${me.id}", Aliases: ${JSON.stringify(me.aliases || [])}).
-- When the memory refers to "I", "me", "my", "myself", or the user states their name/identity, they are ALWAYS the root user.
-- NEVER create a separate 'person' entity for the user! Use temp_id='me' for the user.
-- If the user states biographical details, attach them as facts to temp_id='me'.
+EXTRACTION RULES:
+1. ROOT USER IDENTITY ('me'):
+- The user/author is "${me.name}" (ID: "${me.id}", Aliases: ${JSON.stringify(me.aliases || [])}).
+- For mentions of "I", "me", "my", "myself", or the user stating their name, ALWAYS use temp_id='me' with type='person'. NEVER create a duplicate person entity for the user.
+- BIOGRAPHICAL ATTRIBUTES ARE FACTS ON 'me' (NEVER ENTITIES):
+  DOB/birthday (key='birth_date', value='YYYY-MM-DD'), age (key='age'), full name (key='full_name'), weight (key='weight'), height (key='height'), phone (key='phone'), email (key='email'), blood group (key='blood_type'), salary (key='salary'), gender (key='gender'), hometown (key='hometown').
+  Example: "I weigh 62 kg" -> entities: [me only], facts: [{entity_temp_id: 'me', key: 'weight', value: '62 kg'}], edges: [].
 
-BIOGRAPHICAL ATTRIBUTES ARE FACTS, NEVER ENTITIES (CRITICAL):
-The following personal attributes are PROPERTIES of the user. They MUST be extracted as entries in the "facts" array on temp_id='me'. Do NOT create any entity (event, item, period, other, or any type) for them:
-- Birthday / date of birth / DOB → fact: key='birth_date', value='YYYY-MM-DD'
-- Age → fact: key='age', value='<number>'
-- Full name / real name → fact: key='full_name', value='<name>'
-- Height → fact: key='height', value='<measurement>'
-- Weight → fact: key='weight', value='<measurement>'
-- Phone number → fact: key='phone', value='<number>'
-- Email → fact: key='email', value='<address>'
-- Blood type → fact: key='blood_type', value='<type>'
-- Zodiac sign / star sign → fact: key='zodiac_sign', value='<sign>'
-- MBTI / personality type → fact: key='mbti', value='<type>'
-- Hometown / native place → fact: key='hometown', value='<place>' (but the place itself CAN be an entity if it's a real location)
-- Salary / income / CTC → fact: key='salary', value='<amount>'
-- Gender / pronouns → fact: key='gender', value='<value>'
-Example: "my birthday is 4th october 1999" → entities: [me only], edges: [], facts: [{entity_temp_id: 'me', key: 'birth_date', value: '1999-10-04'}], event_date: '1999-10-04', date_precision: 'day'
-Example: "I weigh 62 kg" → entities: [me only], edges: [], facts: [{entity_temp_id: 'me', key: 'weight', value: '62 kg'}]
-If the input ONLY contains biographical attributes with no real-world entities, the entities array should contain ONLY the 'me' entity.
+2. CANONICAL NAMES & WORLD KNOWLEDGE:
+- Expand abbreviations/slang to canonical names (e.g. "himym" -> "How I Met Your Mother", "b99" -> "Brooklyn Nine-Nine", "z50" -> "Nikon Z50", "mcoc" -> "Marvel Contest of Champions").
+- Store original colloquial shorthand in the "aliases" array.
 
-1. WORLD KNOWLEDGE, ACRONYM EXPANSION & CANONICALIZATION (CRITICAL):
-- The user writes casually and may use colloquial abbreviations, pop-culture acronyms, equipment model names, or misspellings.
-- YOU MUST USE DEEP WORLD KNOWLEDGE TO EXPAND SLANG, ACRONYMS, AND INFORMAL REFERENCES INTO CANONICAL TITLES:
-  * "himym" -> Canonical Name: "How I Met Your Mother", Type: "show", Aliases: ["himym", "HIMYM"], Summary: "CBS comedy sitcom television series created by Craig Thomas and Carter Bays".
-  * "got" (in media context) -> Canonical Name: "Game of Thrones", Type: "show", Aliases: ["got", "GoT"].
-  * "bb" (in media context) -> Canonical Name: "Breaking Bad", Type: "show", Aliases: ["bb", "Breaking Bad"].
-  * "b99" -> Canonical Name: "Brooklyn Nine-Nine", Type: "show", Aliases: ["b99"].
-  * "z50" or "nikon z50" -> Canonical Name: "Nikon Z50", Type: "item", Aliases: ["z50", "Z50"].
-  * "sk400" or "sk400 kit" -> Canonical Name: "Godox SK400 Studio Strobe", Type: "item", Aliases: ["sk400", "SK400 setup", "sk400 kit"].
-  * "lc500r" or "godox light stick" -> Canonical Name: "Godox LC500R Light Stick", Type: "item", Aliases: ["lc500r", "LC500R"].
-  * "viltrox 24mm f1.8" -> Canonical Name: "Viltrox AF 24mm f/1.8 Lens", Type: "item", Aliases: ["24mm lens", "viltrox 24mm"].
-  * "viltrox 56mm f1.4" -> Canonical Name: "Viltrox AF 56mm f/1.4 Lens", Type: "item", Aliases: ["56mm f/1.4 lens", "viltrox 56mm"].
-  * "viltrox 35mm f1.8" -> Canonical Name: "Viltrox AF 35mm f/1.8 Lens", Type: "item", Aliases: ["35mm lens", "viltrox 35mm"].
-  * "mcoc" -> Canonical Name: "Marvel Contest of Champions", Type: "other", Aliases: ["mcoc", "MCoC"].
-- ALWAYS set the entity 'name' to the full, canonical title.
-- Store the user's exact slang or shorthand in 'aliases' so future mentions immediately match!
+3. DEDUPLICATION (CANDIDATE MATCHING):
+- Check "Candidate Existing Entities in Graph". If an entity refers to a candidate, set match: { existing_id: "<candidate.id>", confidence: 1.0 }. Do NOT create duplicate entities.
 
-2. ASSIGN TO EXISTING NODES OR UPDATE EXISTING NODES (DEDUPLICATION):
-- Inspect "Candidate Existing Entities in Graph".
-- If the user's text refers to, discusses, or updates an entity that already exists in candidates:
-  YOU MUST SET: match: { existing_id: "<candidate.id>", confidence: 1.0 }
-- Extract all new facts, states, opinions, ratings, or updates (e.g. key='last_watched', value='season 9 finale', key='status', value='battery drained') and attach them to that entity!
-- DO NOT invent duplicate entities for concepts that already exist in the graph!
+4. SCOPE & SALIENCE:
+- Extract salient real-world entities mentioned (max 8-10 entities).
+- Keep entity summaries concise (1 sentence max).
+- Do NOT generate redundant intermediate category or taxonomy nodes (the graph hierarchy engine organizes domains automatically).
+- If the input is purely personal attributes, entities array should contain ONLY 'me'.
 
-3. MULTI-TIER DEEP ONTOLOGY (ARBITRARY DEPTH N >= 3):
-- CRITICAL: DO NOT build flat dandelion star-graphs from 'me'!
-- Organize entities into structured multi-tier trees using intermediate category nodes:
-  * PHOTOGRAPHY MULTI-TIER TREE:
-    'me' -> passionate_about -> "Photography" (Level 1: Domain)
-    "Photography" -> category -> "Camera Equipment" (Level 2: Category)
-    "Camera Equipment" -> camera_body -> "Nikon Z50" (Level 3: Body)
-    "Nikon Z50" -> has_lens -> "Viltrox 56mm f/1.4 Lens", "Viltrox 24mm f/1.8 Lens", "16-50mm kit lens", etc. (Level 4: Optics)
-    "Photography" -> category -> "Lighting Equipment" (Level 2: Category)
-    "Lighting Equipment" -> equipment -> "Godox LC500R", "SK400 setup" (Level 3: Gear)
-    "Photography" -> category -> "Creative Projects" (Level 2: Category)
-    "Creative Projects" -> project -> "Short-film project" (Level 3: Event)
-  * MEDIA & ENTERTAINMENT MULTI-TIER TREE:
-    'me' -> enjoys -> "Media & Entertainment" (Level 1: Domain)
-    "Media & Entertainment" -> category -> "Television & Series" (Level 2: Category)
-    "Television & Series" -> series -> "How I Met Your Mother" (Level 3: Show)
-    "Media & Entertainment" -> category -> "Films & Cinema" (Level 2: Category)
-    "Films & Cinema" -> movie -> "Catch Me If You Can" (Level 3: Movie)
-    "Media & Entertainment" -> category -> "Gaming" (Level 2: Category)
-    "Gaming" -> game -> "Marvel Contest of Champions" (Level 3: Game)
-    "Media & Entertainment" -> category -> "Audiobooks & Literature" (Level 2: Category)
-    "Audiobooks & Literature" -> platform -> "Audible" (Level 3: Platform)
-  * INTERNATIONAL RELOCATION MULTI-TIER TREE:
-    'me' -> aiming_for -> "International Relocation" (Level 1: Domain)
-    "International Relocation" -> category -> "Target Countries" (Level 2: Category)
-    "Target Countries" -> target_country -> "United States", "Canada", "Australia", etc.
-  * DATING & RELATIONSHIPS MULTI-TIER TREE:
-    'me' -> explores -> "Dating & Relationships" (Level 1: Domain)
-    "Dating & Relationships" -> category -> "Dating Platforms" (Level 2: Category)
-    "Dating Platforms" -> platform -> "Tinder", "Bumble", "Hinge", "Aisle", "Nymph"
-    "Dating & Relationships" -> category -> "Personal Connections" (Level 2: Category)
-    "Personal Connections" -> connection -> "Cindy"
-  * FOOD & DIETARY MULTI-TIER TREE:
-    'me' -> has_preference -> "Food Preferences" (Level 1: Domain)
-    "Food Preferences" -> category -> "Favorite Dishes" (Level 2: Category)
-    "Favorite Dishes" -> favorite_dish -> "Dosa", "Idli", "Peanut chutney"
-    "Food Preferences" -> category -> "Avoided Foods" (Level 2: Category)
-    "Avoided Foods" -> avoids -> "Bitter gourd", "Brinjal", "Leafy greens", "Tomato"
+5. TEMPORAL DATES & FACTS:
+- Resolve relative dates ("yesterday", "last Friday") relative to current IST date.
+- Extract all specific facts, numbers, dates, statuses, and specs into facts.`;
 
-4. STRICT ANTI-BYPASS RULE (ZERO SPOKES FROM 'ME' TO LEAF NODES):
-- NEVER connect root user 'me' directly to a leaf node (e.g. an app, tool, lens, light, show, movie, food dish, country).
-- If the user uses, tries, buys, watches, eats, or likes a leaf entity:
-  * The leaf entity connects to its Category (e.g. "Dating Platforms" -> platform -> "Nymph", "Television & Series" -> series -> "How I Met Your Mother").
-  * The user's action and status MUST be recorded in FACTS on that leaf entity (e.g. on Nymph: key='status', value='trying', key='started_using', value='2026-01-10').
-  * DO NOT add an edge from 'me' to that leaf entity!
-- The ONLY entities 'me' connects directly to are:
-  1. Top-level Domain Hubs ('Photography', 'Media & Entertainment', 'Dating & Relationships', 'International Relocation', 'Food Preferences', etc.)
-  2. First-degree personal anchors: Parents ('family_of'), Primary Employer ('works_at'), Current City ('lives_in'), or major autobiographical life events ('Ooty trip').
+        const chunks = chunkText(text, 2500);
 
-4. STATEFUL GRAPH MUTAGENESIS (QUANTITIES & PROGRESSION):
-- If the user indicates acquiring *more* of something they already own (e.g., "purchased another Godox lc500r"), DO NOT create a new entity. 
-- Look at the entity's \`current_state\` in the Candidates context. If it has \`quantity: X\`, update the entity props to include \`quantity: X+1\` (or \`quantity: 2\` if undefined). 
-- If the user says "I now have 3 of these", update props to include \`quantity: 3\`.
-- This applies to progression as well (e.g., "finished season 4", update props with \`current_season: 4\`).
-
-5. TEMPORAL EVENT INSTANTIATION (RECURRING EVENTS):
-- When the user mentions recurring, cyclical events (e.g., "2024 Birthday", "2025 Birthday", "Christmas 2023", "Our 5th Anniversary"):
-  - DO NOT merge all years into one massive abstract "Birthday" node.
-  - DO NOT attach specific people to the abstract concept.
-  - Instead, create a specific Event Instance (e.g., name: "2025 Birthday", type: "event") and connect it to the abstract Concept (name: "Birthday", type: "event" or "concept") via an edge: "instance_of".
-  - Attach the specific participants (a,b,c) and date (2025-10-04) strictly to the Event Instance ("2025 Birthday").
-
-7. MULTI-HOP GRAPH REASONING (LINKING NODES):
-- You now have access to \`linked_nodes\` for every candidate entity.
-- If a user mentions a concept, DO NOT just look at the node's name. Think based on its linking nodes!
-- Example: If the user says "John came over", and there are two Johns, look at their \`linked_nodes\`. If John A is linked to "Software Company" and John B is linked to "Family", pick the right one based on the memory context.
-
-
-8. FRACTAL NODES (HYPERGRAPHS) - MACRO VS MICRO CONTEXT:
-- If the memory contains a massive overarching event (e.g., "My Trip to Japan", "My 2025 Birthday Party"), treat it as a MACRO CONTEXT (a parent node).
-- Extract the sub-details (e.g., specific meals, hotels, transit on the trip) as MICRO CONTEXTS.
-- For all MICRO entities and edges, you MUST assign \`parent_context_temp_id\` equal to the \`temp_id\` of the MACRO parent node!
-- Example: 
-  entities: [
-    { temp_id: 'trip', type: 'event', name: 'Trip to Japan' },
-    { temp_id: 'hotel', type: 'place', name: 'Shibuya K Hotel', parent_context_temp_id: 'trip' }
-  ]
-
-
-6. Dates & Facts:
-- Resolve relative dates against current date and Known Life Periods.
-- Extract ALL granular facts (specs, numbers, dates, sentiments, opinions, quotes) into the facts array.`;
-
-        const chunks = chunkText(text, 7000);
-        
         const candidateIds = candidates.map(c => c.id);
+        timing.start("graph_context");
         const { data: candidateEdges } = await supabase
           .from('edges')
           .select('src, dst, relation')
           .in('src', candidateIds)
           .is('deleted_at', null)
-          .limit(100);
+          .limit(60);
 
         // Build a mapping for fast name lookup
         const idToName = new Map(candidates.map(c => [c.id, c.name]));
-        
-        // Enrich candidates with their active subgraph connections!
+
+        // Compact enriched candidates for low latency and token efficiency
         const enrichedCandidates = candidates.map(c => {
-          const relatedEdges = (candidateEdges || [])
+          const related = (candidateEdges || [])
             .filter(e => e.src === c.id)
-            .map(e => `${e.relation} -> ${idToName.get(e.dst) || 'Unknown Node'}`);
-            
-          return {
+            .slice(0, 3)
+            .map(e => `${e.relation}->${idToName.get(e.dst) || 'node'}`);
+
+          const obj: any = {
             id: c.id,
-            type: c.type,
             name: c.name,
-            aliases: c.aliases,
-            summary: c.summary,
-            current_state: c.props,
-            linked_nodes: relatedEdges
+            type: c.type
           };
+          if (c.aliases && c.aliases.length > 0) obj.aliases = c.aliases;
+          if (related.length > 0) obj.edges = related;
+          return obj;
         });
 
-        const candidateContext = JSON.stringify(enrichedCandidates, null, 2);
-        const periodsContext = JSON.stringify(periods || [], null, 2);
+        const candidateContext = JSON.stringify(enrichedCandidates);
+        const periodsContext = periods && periods.length > 0
+          ? JSON.stringify(periods.map(p => ({ id: p.id, name: p.name, start: p.start_date, end: p.end_date })))
+          : '[]';
 
-        
+        timing.end("graph_context");
+        timing.start("llm_extraction");
         const extractionPromises = chunks.map(chunk => chatJSON({
           system: systemPrompt,
           prompt: `Raw Memory Entry (Chunk):\n"${chunk}"\n\nCandidate Existing Entities in Graph:\n${candidateContext}\n\nKnown Life Periods:\n${periodsContext}`,
-          schema: extractionSchema
+          schema: extractionSchema,
+          schemaDescription: EXTRACTION_SCHEMA_DESC
         }));
 
-
         const allExtractions = await Promise.all(extractionPromises);
-
+        timing.end("llm_extraction");
+        timing.start("chunk_merge");
         const mergedEntities = new Map<string, any>();
         const tempIdMapping = new Map<string, string>();
         const mergedEdges: any[] = [];
@@ -368,7 +325,7 @@ If the input ONLY contains biographical attributes with no real-world entities, 
             let matchedKey: string | null = null;
             for (const [key, existing] of mergedEntities.entries()) {
               if (key === 'me') continue;
-              
+
               const existingNormName = existing.name?.toLowerCase().trim() || key;
               const existingAliases = (existing.aliases || []).map((a: string) => a.toLowerCase().trim());
 
@@ -455,7 +412,9 @@ If the input ONLY contains biographical attributes with no real-world entities, 
           }
         }
 
-        const { restructureHierarchicalExtraction } = await import('@/lib/graph-hierarchy');
+        timing.end("chunk_merge");
+        timing.start("hierarchy");
+        const { restructureHierarchicalExtraction } = await import("@/lib/graph-hierarchy");
         const hierarchicalResult = await restructureHierarchicalExtraction(
           Array.from(mergedEntities.values()),
           uniqueEdges,
@@ -463,6 +422,8 @@ If the input ONLY contains biographical attributes with no real-world entities, 
           candidates
         );
 
+        timing.end("hierarchy");
+        timing.log("INGEST");
         const finalExtraction = {
           event_date: mergedEventDate,
           date_end: mergedDateEnd,
@@ -482,14 +443,16 @@ If the input ONLY contains biographical attributes with no real-world entities, 
             status: newStatus
           }).eq('id', entry.id);
 
-          extractionCache.set(entry.id, {
+          cacheSet(entry.id, {
             status: newStatus,
             extraction: finalExtraction,
-            candidates
+            candidates,
+            timings: timing.toJSON()
           });
+          await completeJob(supabase, entry.id, 'completed');
         }
 
-        return { finalExtraction, candidates, newStatus };
+        return { finalExtraction, candidates, newStatus, timings: timing.toJSON() };
       } catch (err) {
         console.error('Background extraction error:', err);
         if (isAsync) {
@@ -497,10 +460,11 @@ If the input ONLY contains biographical attributes with no real-world entities, 
             status: 'draft'
           }).eq('id', entry.id);
 
-          extractionCache.set(entry.id, {
+          cacheSet(entry.id, {
             status: 'error',
             error: String(err)
           });
+          await completeJob(supabase, entry.id, 'failed', err instanceof Error ? err.message : String(err));
         }
         throw err;
       }
@@ -511,22 +475,29 @@ If the input ONLY contains biographical attributes with no real-world entities, 
       after(async () => {
         await extractionTask().catch(e => console.error('Unhandled async extraction error:', e));
       });
-      return NextResponse.json({
+      const res = NextResponse.json({
         entry_id: entry.id,
-        status: 'extracting',
-        message: 'Memory extraction underway in neural background'
+        status: "extracting",
+        message: "Memory extraction underway in neural background"
       }, { status: 202 });
+      res.headers.set("Server-Timing", timing.getHeader());
+      return res;
     } else {
       // Sync execution
-      const { finalExtraction, candidates } = await extractionTask();
-      return NextResponse.json({
+      const { finalExtraction, candidates, timings } = await extractionTask();
+      const res = NextResponse.json({
         entry_id: entry.id,
         extraction: finalExtraction,
-        candidates
+        candidates,
+        timings
       });
+      res.headers.set("Server-Timing", timing.getHeader());
+      return res;
     }
   } catch (error: any) {
     console.error('Ingest error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    const res = NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    res.headers.set("Server-Timing", timing.getHeader());
+    return res;
   }
 }

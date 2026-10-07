@@ -24,8 +24,9 @@ export interface CandidateEntity {
 export interface MatchResult {
   matchedId: string;
   confidence: number;
-  matchType: 'exact' | 'alias' | 'fuzzy_string' | 'semantic_vector';
+  matchType: 'exact' | 'alias' | 'fuzzy_string' | 'semantic_vector' | 'context_boost' | 'ambiguous';
   existingEntity: CandidateEntity;
+  ambiguousCandidates?: Array<{ id: string, name: string, confidence: number, entity: CandidateEntity }>;
 }
 
 /**
@@ -97,16 +98,27 @@ export function stringSimilarity(s1: string, s2: string): number {
  */
 export function resolveEntityMatch(
   newEntity: { name: string; type?: string; aliases?: string[]; embedding?: number[] | null },
-  existingEntities: CandidateEntity[]
+  existingEntities: CandidateEntity[],
+  connectedCandidateIds?: Set<string>
 ): MatchResult | null {
   const normNewName = normalizeEntityName(newEntity.name);
   if (!normNewName) return null;
 
   const newAliases = (newEntity.aliases || []).map(normalizeEntityName);
+  const typesCompatible = (existing: CandidateEntity) =>
+    !newEntity.type || !existing.type || newEntity.type === existing.type;
+
+  const candidates: Array<{ id: string, name: string, confidence: number, matchType: any, entity: CandidateEntity }> = [];
 
   for (const existing of existingEntities) {
+    if (!typesCompatible(existing)) continue;
     const normExistingName = normalizeEntityName(existing.name);
     const existingAliases = (existing.aliases || []).map(normalizeEntityName);
+
+    const hasConnection = connectedCandidateIds ? connectedCandidateIds.has(existing.id) : false;
+    const typeMatchBoost = (newEntity.type && existing.type === newEntity.type) ? 0.02 : 0;
+    const contextBoost = hasConnection ? 0.05 : 0;
+    const totalBoost = typeMatchBoost + contextBoost;
 
     // 1. Exact Name Match (Normalized)
     if (normNewName === normExistingName) {
@@ -126,54 +138,68 @@ export function resolveEntityMatch(
     ) {
       return {
         matchedId: existing.id,
-        confidence: 0.98,
+        confidence: 0.95,
         matchType: 'alias',
         existingEntity: existing
       };
     }
 
-    // 3. Type compatibility check for fuzzy matching
-    // (Only match similar names if their types are compatible or undefined)
-    const typesCompatible = !newEntity.type || !existing.type || newEntity.type === existing.type;
-
-    if (typesCompatible) {
-      // Fuzzy string metric
-      const sim = stringSimilarity(newEntity.name, existing.name);
-      if (sim >= 0.88) {
-        return {
-          matchedId: existing.id,
-          confidence: Math.round(sim * 100) / 100,
-          matchType: 'fuzzy_string',
-          existingEntity: existing
-        };
-      }
-
-      // Check fuzzy against aliases
-      for (const alias of existingAliases) {
-        const aSim = stringSimilarity(normNewName, alias);
-        if (aSim >= 0.90) {
-          return {
-            matchedId: existing.id,
-            confidence: Math.round(aSim * 100) / 100,
-            matchType: 'fuzzy_string',
-            existingEntity: existing
-          };
-        }
-      }
+    const sim = stringSimilarity(newEntity.name, existing.name);
+    let bestFuzzy = sim;
+    for (const alias of existingAliases) {
+      const aSim = stringSimilarity(normNewName, alias);
+      if (aSim > bestFuzzy) bestFuzzy = aSim;
     }
 
-    // 4. Semantic Vector Match (if embeddings available and types match)
-    if (typesCompatible && newEntity.embedding && existing.embedding) {
-      const vecSim = cosineSimilarity(newEntity.embedding, existing.embedding);
-      if (vecSim >= 0.93) {
-        return {
-          matchedId: existing.id,
-          confidence: Math.round(vecSim * 100) / 100,
-          matchType: 'semantic_vector',
-          existingEntity: existing
-        };
-      }
+    let vecSim = 0;
+    if (newEntity.embedding && existing.embedding) {
+      vecSim = cosineSimilarity(newEntity.embedding, existing.embedding);
     }
+
+    const maxScore = Math.max(bestFuzzy, vecSim);
+    const boostedScore = Math.min(1.0, maxScore + totalBoost);
+
+    let matchType: any = maxScore === vecSim ? 'semantic_vector' : 'fuzzy_string';
+    if (boostedScore > maxScore) matchType = 'context_boost';
+
+    if (boostedScore >= 0.80) {
+      candidates.push({
+        id: existing.id,
+        name: existing.name,
+        confidence: Math.round(boostedScore * 100) / 100,
+        matchType,
+        entity: existing
+      });
+    }
+  }
+
+  candidates.sort((a, b) => b.confidence - a.confidence);
+
+  if (candidates.length === 0) return null;
+
+  const top = candidates[0];
+
+  let thresholdMet = false;
+  if (top.matchType === 'context_boost' && top.confidence >= 0.88) thresholdMet = true;
+  else if (top.matchType === 'semantic_vector' && top.confidence >= 0.93) thresholdMet = true;
+  else if (top.matchType === 'fuzzy_string' && top.confidence >= 0.88) thresholdMet = true;
+  // If it's a fuzzy alias >= 0.90 we don't have separate tracking, but fuzzy >= 0.88 is sufficient
+
+  if (thresholdMet) {
+    return {
+      matchedId: top.id,
+      confidence: top.confidence,
+      matchType: top.matchType,
+      existingEntity: top.entity
+    };
+  } else if (top.confidence >= 0.80 && top.confidence < 0.88) {
+    return {
+      matchedId: top.id,
+      confidence: top.confidence,
+      matchType: 'ambiguous',
+      existingEntity: top.entity,
+      ambiguousCandidates: candidates.slice(0, 3)
+    };
   }
 
   return null;
@@ -310,4 +336,74 @@ export async function retrieveHighRecallCandidates(
   }
 
   return Array.from(candidateMap.values());
+}
+
+export function resolveEntitiesBatch(
+  newEntities: Array<{ temp_id: string; name: string; type?: string; aliases?: string[]; embedding?: number[] | null }>,
+  edges: Array<{ src_temp_id: string; dst_temp_id: string }>,
+  existingEntities: CandidateEntity[]
+): Record<string, MatchResult | null> {
+  const results: Record<string, MatchResult | null> = {};
+
+  // Track confident mappings temp_id -> existing_id
+  const mappings = new Map<string, string>();
+
+  // 1. Initial pass - exact/alias matches
+  for (const ent of newEntities) {
+    const res = resolveEntityMatch(ent, existingEntities);
+    if (res && res.confidence >= 0.95 && res.matchType !== 'ambiguous') {
+      mappings.set(ent.temp_id, res.matchedId);
+      results[ent.temp_id] = res;
+    }
+  }
+
+  // 2. Second pass - use edges to provide context boost
+  for (const ent of newEntities) {
+    if (mappings.has(ent.temp_id)) continue;
+
+    // Find all connected temp_ids that have been mapped
+    const connectedIds = new Set<string>();
+    for (const edge of edges) {
+      if (edge.src_temp_id === ent.temp_id && mappings.has(edge.dst_temp_id)) {
+        connectedIds.add(mappings.get(edge.dst_temp_id)!);
+      }
+      if (edge.dst_temp_id === ent.temp_id && mappings.has(edge.src_temp_id)) {
+        connectedIds.add(mappings.get(edge.src_temp_id)!);
+      }
+    }
+
+    const res = resolveEntityMatch(ent, existingEntities, connectedIds.size > 0 ? connectedIds : undefined);
+    results[ent.temp_id] = res;
+
+    if (res && res.matchType !== 'ambiguous') {
+      mappings.set(ent.temp_id, res.matchedId);
+    }
+  }
+
+  return results;
+}
+
+export function generateClarificationQuestions(matchResult: MatchResult): string[] {
+  if (matchResult.matchType !== 'ambiguous' || !matchResult.ambiguousCandidates) return [];
+
+  const questions: string[] = [];
+  const candidates = matchResult.ambiguousCandidates;
+
+  if (candidates.length >= 2) {
+    const c1 = candidates[0];
+    const c2 = candidates[1];
+
+    let q = `Did you mean ${c1.name}`;
+    if (c1.entity.summary) q += ` (${c1.entity.summary})`;
+    else if (c1.entity.type) q += ` (${c1.entity.type})`;
+
+    q += ` or ${c2.name}`;
+    if (c2.entity.summary) q += ` (${c2.entity.summary})`;
+    else if (c2.entity.type) q += ` (${c2.entity.type})`;
+
+    q += `?`;
+    questions.push(q);
+  }
+
+  return questions;
 }
