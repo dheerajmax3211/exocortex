@@ -1,7 +1,7 @@
 # Machine Learning Benchmark Suite (Virtual Brain)
 
-*Generated autonomously via `scripts/eval-extraction.ts` on 2026-10-07.*
-*Execution Time: 1.85s across all on-device models.*
+*Generated autonomously via `scripts/eval-extraction.ts` on 2026-10-12.*
+*Execution Time: 1.50s across all on-device models.*
 
 This benchmark measures the real, inspectable performance of on-device machine learning models running locally inside the pipeline (using quantized ONNX weights via `@xenova/transformers`). No LLM self-evaluation or simulated scores are used.
 

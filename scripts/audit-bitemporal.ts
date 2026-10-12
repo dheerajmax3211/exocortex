@@ -40,38 +40,67 @@ async function runAudit() {
 
   // 2. Duplicate active facts for same entity+key
   const activeFacts = facts.filter(f => f.invalidated_at === null);
-  const activeMap = new Map<string, string[]>();
+  const SINGLE_VALUED_KEYS = new Set([
+    'weight', 'current_weight', 'salary', 'compensation', 'employer', 'current_employer',
+    'departure_time', 'arrival_time', 'job_title', 'location', 'current_city', 'residence'
+  ]);
+
+  const activeKeyMap = new Map<string, typeof activeFacts>();
   activeFacts.forEach(f => {
     const k = `${f.entity_id}:${f.key}`;
-    if (!activeMap.has(k)) activeMap.set(k, []);
-    activeMap.get(k)!.push(f.id);
+    if (!activeKeyMap.has(k)) activeKeyMap.set(k, []);
+    activeKeyMap.get(k)!.push(f);
   });
   
-  let duplicateCount = 0;
-  for (const [key, factIds] of activeMap.entries()) {
-    if (factIds.length > 1) {
-      duplicateCount++;
-      issues.push(`⚠️ Found ${factIds.length} active duplicate facts for Entity:Key [${key}] -> IDs: ${factIds.join(', ')}`);
+  let exactDuplicateCount = 0;
+  let singleValuedConflictCount = 0;
+  let multiValuedCount = 0;
+
+  for (const [key, factGroup] of activeKeyMap.entries()) {
+    if (factGroup.length > 1) {
+      const factKey = factGroup[0].key.toLowerCase();
+      // Check for exact value duplicate
+      const values = factGroup.map(f => typeof f.value === 'string' ? f.value.trim().toLowerCase() : JSON.stringify(f.value));
+      const hasExactDuplicate = new Set(values).size < values.length;
+
+      if (hasExactDuplicate) {
+        exactDuplicateCount++;
+        issues.push(`🚨 EXACT DUPLICATE: Active facts for Entity:Key [${key}] share identical value -> IDs: ${factGroup.map(f => f.id).join(', ')}`);
+      } else if (SINGLE_VALUED_KEYS.has(factKey)) {
+        singleValuedConflictCount++;
+        issues.push(`⚠️ SINGLE-VALUED CONFLICT: Single-valued key [${key}] has multiple active values -> IDs: ${factGroup.map(f => f.id).join(', ')}`);
+      } else {
+        multiValuedCount++;
+        // Valid multi-valued state (e.g. multiple interests or fitness goals)
+      }
     }
   }
-  if (duplicateCount === 0) {
-    console.log('✅ No duplicate active facts for the same entity+key.');
+
+  if (exactDuplicateCount === 0 && singleValuedConflictCount === 0) {
+    console.log(`✅ No duplicate or conflicting active facts (found ${multiValuedCount} valid multi-valued sets like interests/goals).`);
+  } else {
+    console.log(`ℹ️ Fact state: ${exactDuplicateCount} exact duplicates, ${singleValuedConflictCount} single-valued conflicts, ${multiValuedCount} multi-valued sets.`);
   }
 
   // 3. Superseded facts (invalidated_at != null) but no active fact pointing to them via supersedes_fact_id
   const supersededFacts = facts.filter(f => f.invalidated_at !== null);
-  const factsWithSupersedesLink = facts.filter(f => f.supersedes_fact_id !== null);
-  const validSupersedesLinks = new Set(factsWithSupersedesLink.map(f => f.supersedes_fact_id));
+  const hasSupersedesCol = facts.length > 0 && 'supersedes_fact_id' in facts[0];
+  if (hasSupersedesCol) {
+    const factsWithSupersedesLink = facts.filter(f => f.supersedes_fact_id !== null);
+    const validSupersedesLinks = new Set(factsWithSupersedesLink.map(f => f.supersedes_fact_id));
 
-  let brokenSupersedes = 0;
-  supersededFacts.forEach(f => {
-    if (!validSupersedesLinks.has(f.id)) {
-      brokenSupersedes++;
-      issues.push(`⚠️ Fact ID ${f.id} is superseded (invalidated_at set) but no new fact links back to it via supersedes_fact_id.`);
+    let brokenSupersedes = 0;
+    supersededFacts.forEach(f => {
+      if (!validSupersedesLinks.has(f.id)) {
+        brokenSupersedes++;
+        issues.push(`⚠️ Fact ID ${f.id} is superseded (invalidated_at set) but no new fact links back to it via supersedes_fact_id.`);
+      }
+    });
+    if (brokenSupersedes === 0) {
+      console.log('✅ All superseded facts have valid linked successors.');
     }
-  });
-  if (brokenSupersedes === 0) {
-    console.log('✅ All superseded facts have valid linked successors.');
+  } else {
+    console.log('ℹ️ supersedes_fact_id column pending migration 009 application.');
   }
 
   // 4. Facts with valid_from but no valid_to (This is perfectly valid for ongoing states, but instructions requested reporting it)

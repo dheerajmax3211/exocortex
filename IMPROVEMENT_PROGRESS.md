@@ -321,8 +321,34 @@ Read this file and `VirtualDheeraj-potential-improvements.md`, inspect `git stat
 - `git diff --check`: 0 errors.
 - Live `chatJSON` tested and verified (succeeded in 17.4s with provider).
 - Dev server active and serving on `http://localhost:3000`.
+---
 
+### Update: Dual Authentication, Bitemporal Hygiene, and Local Engine Unification
 
+#### 1. Dual-Mode Server Authentication (`src/lib/supabase/server.ts`)
+- Updated `createClient()` to inspect incoming `Authorization: Bearer <token>` HTTP headers.
+- Patched `client.auth.getUser` to transparently authenticate with the bearer token when cookies are absent.
+- Enables external CLI tools, background test harnesses, and automated scripts (`test-temporal-corrections.ts`) to interact with authenticated API routes without requiring a browser session.
 
+#### 2. Automated Fact Hygiene & Single-Valued Conflict Resolution (`src/app/api/cron/hygiene/route.ts`)
+- Implemented single-valued fact conflict detection and resolution across active facts. Keys with singular semantics (`weight`, `salary`, `departure_time`, `employer`) automatically invalidate older conflicting observations when newer assertions are committed.
+- Added graceful handling for missing database RPCs (`find_duplicate_entities`), allowing the hygiene cron to execute safely even on early database migrations.
+- Tested and verified against the live database: resolved conflicting `departure_time` assertions, marking the superseded observation with a valid closed time bound.
 
+#### 3. Bitemporal Semantics Verification (`scripts/audit-bitemporal.ts`)
+- Refined the audit suite to distinguish between exact duplicate values, single-valued temporal conflicts, and valid multi-valued fact sets (such as multiple concurrent interests or fitness goals).
+- Live audit confirmed:
+  - 170 total facts audited.
+  - 0 precision / timestamp mismatches.
+  - 0 exact duplicates or active single-valued conflicts.
+  - 100% closed `valid_to` bounds for invalidated facts.
+  - Passed cleanly.
+
+#### Verification Checks Performed:
+- `npx tsc --noEmit`: 0 errors.
+- `scripts/audit-bitemporal.ts`: Passed (170 facts).
+- `scripts/eval-graph-health.ts`: Passed (94 entities, 113 edges).
+- `scripts/eval-extraction-quality.ts`: Passed (8/8 entries, 100% pass rate).
+- `scripts/eval-extraction.ts`: Passed (NER F1: 87.0%, Rerank Precision@5: 100%).
+- Dev server verified active and serving on `http://localhost:3000`.
 
