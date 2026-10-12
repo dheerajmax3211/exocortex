@@ -20,12 +20,24 @@ export default function HUD({
   onOpenSimulator
 }: HUDProps) {
   const [greeting, setGreeting] = useState('Good day');
+  const [pulseThought, setPulseThought] = useState<string | null>(null);
   
   useEffect(() => {
     const hour = new Date().getHours();
     if (hour < 12) setGreeting('Good morning');
     else if (hour < 18) setGreeting('Good afternoon');
     else setGreeting('Good evening');
+
+    fetch('/api/mind-state')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.tensions?.length > 0) {
+          setPulseThought(`⚡ Spar: ${data.tensions[0].headline}`);
+        } else if (data?.vectors?.daily_thought) {
+          setPulseThought(data.vectors.daily_thought);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   return (
@@ -63,6 +75,18 @@ export default function HUD({
             </p>
           </div>
         </div>
+
+        {/* Center: Live Alter-Ego Sparring Ticker */}
+        {pulseThought && onOpenMind && (
+          <button
+            onClick={onOpenMind}
+            className="hidden lg:flex items-center gap-2 max-w-sm xl:max-w-md px-3 py-1.5 rounded-full bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 text-[11px] font-mono text-indigo-300 hover:text-white transition-all text-left overflow-hidden group cursor-pointer shadow-sm"
+            title="Click to view subconscious sparring analysis"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 shadow-[0_0_6px_#f59e0b] group-hover:animate-ping" />
+            <span className="truncate">{pulseThought}</span>
+          </button>
+        )}
 
         {/* Right: Modern Glass Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">

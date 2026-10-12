@@ -49,11 +49,47 @@ interface ChatStreamOptions {
   tools?: ToolDef[];
 }
 
-function getEnvConfig() {
-  const provider = process.env.LLM_PROVIDER || 'openai';
-  const baseUrl = process.env.LLM_BASE_URL || (provider === 'openai' ? 'https://api.deepseek.com' : 'https://api.commandcode.ai');
-  const apiKey = process.env.LLM_API_KEY || '';
-  const model = process.env.LLM_MODEL || (provider === 'openai' ? 'deepseek-flash' : 'deepseek/deepseek-v4-flash');
+export function getChatCompletionsUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, '');
+  if (trimmed.endsWith('/v1')) {
+    return `${trimmed}/chat/completions`;
+  }
+  return `${trimmed}/v1/chat/completions`;
+}
+
+export function getAuthHeaders(apiKey: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey && apiKey.trim() && apiKey !== 'ollama' && apiKey !== 'local') {
+    headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+  }
+  return headers;
+}
+
+export function getEnvConfig() {
+  const rawProvider = (process.env.LLM_PROVIDER || 'openai').toLowerCase();
+  let provider = rawProvider;
+  let baseUrl = process.env.LLM_BASE_URL || '';
+  let apiKey = process.env.LLM_API_KEY || '';
+  let model = process.env.LLM_MODEL || '';
+
+  if (provider === 'ollama') {
+    baseUrl = baseUrl || 'http://localhost:11434';
+    apiKey = apiKey || 'ollama';
+    model = model || 'llama3.2';
+  } else if (provider === 'local' || provider === 'lmstudio') {
+    baseUrl = baseUrl || 'http://localhost:1234';
+    apiKey = apiKey || 'local';
+    model = model || 'local-model';
+  } else if (provider === 'commandcode') {
+    baseUrl = baseUrl || 'https://api.commandcode.ai';
+    model = model || 'deepseek/deepseek-v4-flash';
+  } else {
+    // default openai-compatible (e.g. DeepSeek or OpenAI)
+    baseUrl = baseUrl || 'https://api.deepseek.com';
+    model = model || 'deepseek-flash';
+  }
 
   return { provider, baseUrl, apiKey, model };
 }
@@ -357,23 +393,35 @@ export async function chatJSON<T>({ system, prompt, schema, schemaDescription, t
           }
         }
       } else {
-        const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        const chatUrl = getChatCompletionsUrl(baseUrl);
+        const headers = getAuthHeaders(apiKey);
+        const payload: any = {
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: currentPrompt }
+          ],
+          temperature,
+          response_format: { type: 'json_object' },
+        };
+
+        let response = await fetch(chatUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: currentPrompt }
-            ],
-            temperature,
-            response_format: { type: 'json_object' },
-          }),
+          headers,
+          body: JSON.stringify(payload),
           signal: controller.signal
         });
+
+        // Some local models in Ollama/vLLM fail if response_format: json_object is supplied
+        if (!response.ok && response.status === 400) {
+          delete payload.response_format;
+          response = await fetch(chatUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+        }
 
         if (!response.ok) {
           throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
@@ -504,12 +552,9 @@ export async function chatWithTools({ system, messages, tools, maxSteps = 6, exe
           payload.tool_choice = 'auto';
         }
 
-        const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        const response = await fetch(getChatCompletionsUrl(baseUrl), {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
+          headers: getAuthHeaders(apiKey),
           body: JSON.stringify(payload),
           signal: controller.signal
         });
@@ -654,12 +699,9 @@ export async function* chatStream({ system, messages, tools }: ChatStreamOptions
       stream: true
     };
 
-    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+    const response = await fetch(getChatCompletionsUrl(baseUrl), {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
+      headers: getAuthHeaders(apiKey),
       body: JSON.stringify(payload)
     });
 

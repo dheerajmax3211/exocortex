@@ -184,9 +184,16 @@ export default function SettingsPage() {
 
           {/* Model & System Info */}
           <section className="bg-[#12121c] border border-white/10 rounded-2xl p-6 shadow-lg">
-            <h2 className="text-xs font-mono uppercase tracking-wider text-white/60 font-semibold mb-4">
-              LLM & System Configuration
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-mono uppercase tracking-wider text-white/60 font-semibold">
+                LLM & Neural Engine
+              </h2>
+              {info?.isLocal && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  100% Offline / Local
+                </span>
+              )}
+            </div>
             {info ? (
               <div className="space-y-3 text-xs font-mono">
                 <div className="flex justify-between py-1 border-b border-white/5">
@@ -198,12 +205,20 @@ export default function SettingsPage() {
                   <span className="text-white">{info.model}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-white/5">
+                  <span className="text-white/50">Endpoint</span>
+                  <span className="text-white/70 truncate max-w-[220px]">{info.baseUrl}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-white/5">
                   <span className="text-white/50">Timezone</span>
                   <span className="text-white">{info.timezone}</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-white/50">Backup Target</span>
                   <span className="text-white truncate max-w-[200px]">{info.backupRepo}</span>
+                </div>
+
+                <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/5 text-[11px] text-white/60 font-sans">
+                  💡 <span className="font-semibold text-white/80">Local-First Engine:</span> Set <code className="text-indigo-300 font-mono">LLM_PROVIDER=ollama</code> in your <code className="text-indigo-300 font-mono">.env.local</code> to run completely free and offline with Ollama (<code className="text-indigo-300 font-mono">llama3.2</code>, <code className="text-indigo-300 font-mono">qwen2.5</code>).
                 </div>
               </div>
             ) : (

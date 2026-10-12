@@ -18,6 +18,8 @@ export function AudioRecorder({ onTranscription, isProcessing = false }: AudioRe
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const speechRecognitionRef = useRef<any>(null);
+  const speechTranscriptRef = useRef<string>("");
 
   useEffect(() => {
     return () => {
@@ -25,6 +27,9 @@ export function AudioRecorder({ onTranscription, isProcessing = false }: AudioRe
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
         mediaRecorderRef.current.stop();
+      }
+      if (speechRecognitionRef.current) {
+        try { speechRecognitionRef.current.stop(); } catch {}
       }
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(console.error);
@@ -34,6 +39,29 @@ export function AudioRecorder({ onTranscription, isProcessing = false }: AudioRe
 
   const startRecording = async () => {
     try {
+      speechTranscriptRef.current = "";
+      const SpeechRecognition = typeof window !== 'undefined' && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+      if (SpeechRecognition) {
+        try {
+          const rec = new SpeechRecognition();
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.lang = 'en-US';
+          rec.onresult = (e: any) => {
+            let text = '';
+            for (let i = 0; i < e.results.length; i++) {
+              text += e.results[i][0].transcript + ' ';
+            }
+            speechTranscriptRef.current = text.trim();
+          };
+          rec.onerror = () => {};
+          rec.start();
+          speechRecognitionRef.current = rec;
+        } catch {
+          // Ignore speech recognition init failure
+        }
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
@@ -99,6 +127,9 @@ export function AudioRecorder({ onTranscription, isProcessing = false }: AudioRe
   };
 
   const stopRecording = () => {
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.stop(); } catch {}
+    }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
@@ -117,17 +148,28 @@ export function AudioRecorder({ onTranscription, isProcessing = false }: AudioRe
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to transcribe audio");
+      if (response.ok) {
+        const data = await response.json();
+        if (data.text && !data.text.includes("[Transcription unavailable")) {
+          onTranscription(data.text);
+          return;
+        }
       }
 
-      const data = await response.json();
-      if (data.text) {
-        onTranscription(data.text);
+      // Seamless fallback to browser SpeechRecognition if backend Whisper API is unavailable
+      if (speechTranscriptRef.current && speechTranscriptRef.current.trim().length > 0) {
+        onTranscription(speechTranscriptRef.current.trim());
+        return;
       }
+
+      alert("Audio captured, but speech transcription was unavailable. You can type your memory directly.");
     } catch (error) {
-      console.error("Transcription error:", error);
-      alert("Failed to transcribe audio. Please try again.");
+      console.warn("Server transcription error, checking speech fallback:", error);
+      if (speechTranscriptRef.current && speechTranscriptRef.current.trim().length > 0) {
+        onTranscription(speechTranscriptRef.current.trim());
+      } else {
+        alert("Failed to transcribe audio. Please type your memory.");
+      }
     } finally {
       setLocalProcessing(false);
       setAudioLevel(0);

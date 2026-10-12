@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { getEnvConfig } from '@/lib/llm';
 
 export async function GET() {
   try {
@@ -10,11 +11,14 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { provider, model, baseUrl } = getEnvConfig();
+
     return NextResponse.json({
       email: user.email,
-      provider: process.env.LLM_PROVIDER || 'openai',
-      model: process.env.LLM_MODEL || (process.env.LLM_PROVIDER === 'commandcode' ? 'deepseek/deepseek-v4-flash' : 'deepseek-flash'),
-      baseUrl: process.env.LLM_BASE_URL || (process.env.LLM_PROVIDER === 'commandcode' ? 'https://api.commandcode.ai' : 'https://api.deepseek.com'),
+      provider,
+      model,
+      baseUrl,
+      isLocal: provider === 'ollama' || provider === 'local' || provider === 'lmstudio' || baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'),
       timezone: 'Asia/Kolkata',
       backupRepo: process.env.GITHUB_BACKUP_REPO || 'Not configured'
     });
