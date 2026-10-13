@@ -3,6 +3,8 @@
 import React, { useRef, useEffect, useMemo, useCallback, useState } from 'react';
 import ForceGraph3D from './ForceGraph3DWrapper';
 import NodeCard from './NodeCard';
+import { playNodeTone, isAudioEnabled, toggleAudio } from '@/lib/audio/soundscapes';
+import type { NeuralLens } from './NeuralLensBar';
 
 // Type imports only - Three.js loaded dynamically
 import type { Group, SphereGeometry, MeshStandardMaterial, MeshBasicMaterial, Mesh } from 'three';
@@ -27,17 +29,34 @@ export interface Graph3DNode {
   isTension?: boolean;
   tensionSeverity?: string;
   tensionHeadline?: string;
+  createdAt?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface Graph3DLink {
   source: string | Graph3DNode;
   target: string | Graph3DNode;
   relation?: string;
+  createdAt?: string;
+  occurredOn?: string;
 }
 
 interface ExploreCanvasProps {
   onViewProfile?: (entityId: string) => void;
   focusedNodeId?: string | null;
+  activeLens?: NeuralLens;
+  temporalThreshold?: number | null;
+  highlightedEntityNames?: string[];
+  isAutoOrbit?: boolean;
+  onToggleAutoOrbit?: () => void;
+  onStatsChange?: (stats: {
+    minTimestamp: number;
+    maxTimestamp: number;
+    activeNodesCount: number;
+    totalNodesCount: number;
+    tensionCount: number;
+  }) => void;
 }
 
 // ---- Category Colors (2026 Luminescent Gemstone Palette) ----
@@ -56,6 +75,17 @@ const CATEGORY_COLORS: Record<string, string> = {
   item:       '#94a3b8', // Titanium Silver / Artifact
   other:      '#64748b', // Slate / General
 };
+
+function matchesLens(node: Graph3DNode, lens?: NeuralLens): boolean {
+  if (!lens || lens === 'all') return true;
+  if (node.isUser) return true;
+  if (lens === 'tensions') return Boolean(node.isTension);
+  if (lens === 'social') return node.type === 'person' || node.type === 'org' || node.type === 'school';
+  if (lens === 'culinary') return node.type === 'restaurant' || node.type === 'dish';
+  if (lens === 'hubs') return Boolean(node.isDomainHub || node.isCategory);
+  if (lens === 'media') return node.type === 'movie' || node.type === 'show' || node.type === 'book';
+  return true;
+}
 
 // Geometry cache for performance (shared across all nodes)
 const geoCache = new Map<string, any>();
@@ -104,7 +134,16 @@ function getOrComputeLinkSynapse(link: any, index = 0) {
   return link;
 }
 
-export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreCanvasProps) {
+export default function ExploreCanvas({
+  onViewProfile,
+  focusedNodeId,
+  activeLens = 'all',
+  temporalThreshold = null,
+  highlightedEntityNames = [],
+  isAutoOrbit = true,
+  onToggleAutoOrbit,
+  onStatsChange,
+}: ExploreCanvasProps) {
   const fgRef = useRef<any>(null);
   const nebulaGroupRef = useRef<any>(null);
   const [graphData, setGraphData] = useState<{ nodes: Graph3DNode[]; links: Graph3DLink[] }>({ nodes: [], links: [] });
@@ -116,6 +155,89 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   const [threeLib, setThreeLib] = useState<typeof import('three') | null>(null);
   const [spriteTextLib, setSpriteTextLib] = useState<any>(null);
   const [mounted, setMounted] = useState(false);
+  const [audioMuted, setAudioMuted] = useState(false);
+
+  useEffect(() => {
+    setAudioMuted(!isAudioEnabled());
+  }, []);
+
+  const handleToggleAudio = useCallback(() => {
+    const enabled = toggleAudio();
+    setAudioMuted(!enabled);
+  }, []);
+
+  // Update Three.js OrbitControls auto-rotation based on isAutoOrbit
+  useEffect(() => {
+    if (!fgRef.current) return;
+    const controls = fgRef.current.controls?.();
+    if (controls) {
+      controls.autoRotate = isAutoOrbit;
+      controls.autoRotateSpeed = 0.25;
+    }
+  }, [isAutoOrbit]);
+
+  // Fast entity ID lookup map
+  const nodeMap = useMemo(() => {
+    const map = new Map<string, Graph3DNode>();
+    graphData.nodes.forEach(n => map.set(n.id, n));
+    return map;
+  }, [graphData.nodes]);
+
+  // Helper to extract timestamp from a node
+  const getNodeTimestamp = useCallback((node: Graph3DNode | undefined): number | null => {
+    if (!node) return null;
+    if (node.startDate) {
+      const d = new Date(node.startDate).getTime();
+      if (!isNaN(d)) return d;
+    }
+    if (node.createdAt) {
+      const d = new Date(node.createdAt).getTime();
+      if (!isNaN(d)) return d;
+    }
+    return null;
+  }, []);
+
+  // Helper to check if a node is in the future relative to temporal scrubber
+  const isNodeFuture = useCallback((node: Graph3DNode | undefined): boolean => {
+    if (!node || node.isUser || temporalThreshold === null || temporalThreshold === undefined) return false;
+    const t = getNodeTimestamp(node);
+    return t !== null && t > temporalThreshold;
+  }, [getNodeTimestamp, temporalThreshold]);
+
+  // Notify parent of min/max timestamps, tension count, and active nodes count
+  useEffect(() => {
+    if (graphData.nodes.length === 0) return;
+
+    let minTs = Infinity;
+    let maxTs = -Infinity;
+    let tensionCount = 0;
+
+    graphData.nodes.forEach(n => {
+      if (n.isTension) tensionCount++;
+      const t = getNodeTimestamp(n);
+      if (t !== null && !isNaN(t)) {
+        if (t < minTs) minTs = t;
+        if (t > maxTs) maxTs = t;
+      }
+    });
+
+    const now = Date.now();
+    if (minTs === Infinity) minTs = now - 365 * 24 * 3600 * 1000 * 3;
+    if (maxTs === -Infinity || maxTs < minTs) maxTs = now;
+    if (maxTs > now + 86400000) maxTs = now;
+
+    const activeCount = (temporalThreshold !== null && temporalThreshold !== undefined)
+      ? graphData.nodes.filter(n => !isNodeFuture(n)).length
+      : graphData.nodes.length;
+
+    onStatsChange?.({
+      minTimestamp: minTs,
+      maxTimestamp: maxTs,
+      activeNodesCount: activeCount,
+      totalNodesCount: graphData.nodes.length,
+      tensionCount,
+    });
+  }, [graphData.nodes, temporalThreshold, getNodeTimestamp, isNodeFuture, onStatsChange]);
 
   // Active focus target for neural spotlight highlighting
   const activeFocusNode = hoveredNode || selectedNode;
@@ -547,6 +669,11 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const node = nodeObj as Graph3DNode;
     if (!threeLib || !spriteTextLib) return new threeLib!.Group();
 
+    // Check if node is in the future relative to the temporal scrubber
+    if (isNodeFuture(node)) {
+      return new threeLib.Group();
+    }
+
     const THREE = threeLib;
     const SpriteText = spriteTextLib;
     const group = new THREE.Group();
@@ -558,7 +685,24 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     const isFocusActive = Boolean(activeFocusNode);
     const isThisActiveNode = activeFocusNode?.id === node.id;
     const isConnectedNeighbor = connectedState.nodeIds.has(node.id);
-    const isDimmed = isFocusActive && !isThisActiveNode && !isConnectedNeighbor;
+
+    // Neural Lens evaluation
+    const isLensMatch = matchesLens(node, activeLens);
+
+    // Entity spotlight from Sparring copilot or search citations
+    const isHighlighted = Boolean(
+      highlightedEntityNames && 
+      highlightedEntityNames.length > 0 &&
+      highlightedEntityNames.some(target => {
+        const term = target.toLowerCase().trim();
+        if (!term) return false;
+        return (node.name && node.name.toLowerCase().includes(term)) ||
+               (node.id && node.id.toLowerCase() === term) ||
+               (node.aliases && Array.isArray(node.aliases) && node.aliases.some((a: string) => a.toLowerCase().includes(term)));
+      })
+    );
+
+    const isDimmed = (isFocusActive && !isThisActiveNode && !isConnectedNeighbor) || (!isLensMatch && !isHighlighted);
 
     let colorHex = CATEGORY_COLORS[node.type] || CATEGORY_COLORS.other;
     if (isUser) colorHex = '#ffffff';
@@ -600,8 +744,8 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
 
     const coreMat = new THREE.MeshStandardMaterial({
       color: isUser ? '#ffffff' : colorHex,
-      emissive: isUser ? '#38bdf8' : colorHex,
-      emissiveIntensity: isDimmed ? 0.08 : (isThisActiveNode ? 2.0 : (isUser ? 1.5 : (isDomainHub ? 1.0 : (isCategory ? 0.8 : 0.5)))),
+      emissive: isUser ? '#38bdf8' : (isHighlighted ? '#00f0ff' : colorHex),
+      emissiveIntensity: isDimmed ? 0.08 : (isHighlighted ? 2.8 : (isThisActiveNode ? 2.0 : (isUser ? 1.5 : (isDomainHub ? 1.0 : (isCategory ? 0.8 : 0.5))))),
       roughness: 0.12,
       metalness: 0.95,
       flatShading: isUser || isDomainHub, // Sharp crystal facets catch the specular light!
@@ -625,6 +769,23 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       side: THREE.BackSide,
     });
     group.add(new THREE.Mesh(geoCache.get(glowGeoKey)!, glowMat));
+
+    // Outer Spotlight Flare if entity is highlighted by Sparring copilot
+    if (isHighlighted) {
+      const hlRadius = baseRadius * 2.2;
+      const hlGeoKey = `highlight-${hlRadius}`;
+      if (!geoCache.has(hlGeoKey)) {
+        geoCache.set(hlGeoKey, new THREE.SphereGeometry(hlRadius, 16, 16));
+      }
+      const hlMat = new THREE.MeshBasicMaterial({
+        color: '#00f0ff',
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide,
+      });
+      group.add(new THREE.Mesh(geoCache.get(hlGeoKey)!, hlMat));
+    }
 
     // 3. Root User Node: Dual Intersecting Quantum Orbital Rings & Ethereal Corona
     if (isUser) {
@@ -721,20 +882,23 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       isDomainHub ||
       isCategory ||
       isThisActiveNode ||
+      isHighlighted ||
       isConnectedNeighbor ||
-      (!isFocusActive && (node.connectionCount || 0) >= 1); // Show all leaf node labels too!
+      (!isFocusActive && isLensMatch && (node.connectionCount || 0) >= 1); // Show all leaf node labels too!
 
     if (shouldShowLabel) {
       const sprite = new SpriteText(node.name || node.id);
       sprite.color = isDimmed 
         ? 'rgba(255, 255, 255, 0.15)'
-        : (isThisActiveNode 
-            ? '#00f0ff' 
-            : (isUser ? '#ffffff' : (isDomainHub ? '#38bdf8' : (isCategory ? '#c084fc' : 'rgba(255, 255, 255, 0.85)'))));
+        : (isHighlighted
+            ? '#00f0ff'
+            : (isThisActiveNode 
+                ? '#00f0ff' 
+                : (isUser ? '#ffffff' : (isDomainHub ? '#38bdf8' : (isCategory ? '#c084fc' : 'rgba(255, 255, 255, 0.85)')))));
       
-      sprite.textHeight = (isThisActiveNode ? 1.25 : 1.0) * (isUser ? 3.2 : (isDomainHub ? 2.4 : (isCategory ? 1.9 : 1.45)));
+      sprite.textHeight = (isThisActiveNode || isHighlighted ? 1.25 : 1.0) * (isUser ? 3.2 : (isDomainHub ? 2.4 : (isCategory ? 1.9 : 1.45)));
       sprite.fontSize = 90;
-      sprite.fontWeight = '600'; // Make text semi-bold
+      sprite.fontWeight = isHighlighted ? '700' : '600'; // Make text bold for highlighted entities
       sprite.strokeWidth = 1.8; // Give it a crisp black outline so it stands out against any background
       sprite.strokeColor = 'rgba(0, 0, 0, 0.9)';
       sprite.fontFace = 'JetBrains Mono, -apple-system, system-ui, sans-serif';
@@ -745,7 +909,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
     }
 
     return group;
-  }, [threeLib, spriteTextLib, activeFocusNode, connectedState]);
+  }, [threeLib, spriteTextLib, activeFocusNode, connectedState, isNodeFuture, activeLens, highlightedEntityNames]);
 
   // ---- Interactions ----
   
@@ -762,6 +926,8 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   }, [contextHistory]);
 
   const handleNodeClick = useCallback((node: any, event: MouseEvent) => {
+    // Play organic crystal resonant chime for the clicked node category
+    playNodeTone(node.type, Boolean(node.isTension));
 
     // Stop auto-rotation on click
     const controls = fgRef.current?.controls?.();
@@ -782,13 +948,32 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
   const handleBackgroundClick = useCallback(() => {
     setSelectedNode(null);
     setHoveredNode(null);
-    // Resume auto-rotation
+    // Resume auto-rotation if enabled
     const controls = fgRef.current?.controls?.();
-    if (controls) controls.autoRotate = true;
-  }, []);
+    if (controls) controls.autoRotate = isAutoOrbit;
+  }, [isAutoOrbit]);
+
+  // Check if link connects to a future node (hidden during temporal scrubbing)
+  const isLinkFuture = useCallback((link: any): boolean => {
+    if (temporalThreshold === null || temporalThreshold === undefined) return false;
+    const src = typeof link.source === 'object' ? link.source : nodeMap.get(link.source);
+    const tgt = typeof link.target === 'object' ? link.target : nodeMap.get(link.target);
+    return isNodeFuture(src) || isNodeFuture(tgt);
+  }, [temporalThreshold, nodeMap, isNodeFuture]);
+
+  // Check if link endpoints match active lens
+  const isLinkLensActive = useCallback((link: any): boolean => {
+    if (!activeLens || activeLens === 'all') return true;
+    const src = typeof link.source === 'object' ? link.source : nodeMap.get(link.source);
+    const tgt = typeof link.target === 'object' ? link.target : nodeMap.get(link.target);
+    if (!src || !tgt) return true;
+    return matchesLens(src, activeLens) || matchesLens(tgt, activeLens);
+  }, [activeLens, nodeMap]);
 
   // ---- Link styling (Neural Synaptic Filaments with Active Spotlight Flare) ----
   const linkColor = useCallback((link: any) => {
+    if (isLinkFuture(link)) return 'rgba(0, 0, 0, 0)';
+
     const srcId = typeof link.source === 'object' ? link.source.id : link.source;
     const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
     if (activeFocusNode) {
@@ -797,20 +982,27 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
       }
       return 'rgba(255, 255, 255, 0.02)'; // Unfocused links fade away
     }
+    if (!isLinkLensActive(link)) {
+      return 'rgba(255, 255, 255, 0.015)'; // Lens dimmed links
+    }
     return 'rgba(148, 163, 184, 0.12)'; // Ethereal starlight filament
-  }, [activeFocusNode]);
+  }, [activeFocusNode, isLinkFuture, isLinkLensActive]);
 
   const linkWidth = useCallback((link: any) => {
+    if (isLinkFuture(link)) return 0;
+
     const srcId = typeof link.source === 'object' ? link.source.id : link.source;
     const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
     if (activeFocusNode && (srcId === activeFocusNode.id || tgtId === activeFocusNode.id)) {
       return 2.0;
     }
     return 0.35;
-  }, [activeFocusNode]);
+  }, [activeFocusNode, isLinkFuture]);
 
   // ---- Link Directional Particles: Random mistimed impulses ----
   const linkParticles = useCallback((link: any) => {
+    if (isLinkFuture(link) || !isLinkLensActive(link)) return 0;
+
     if (activeFocusNode) {
       const srcId = typeof link.source === 'object' ? link.source.id : link.source;
       const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
@@ -822,7 +1014,7 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
 
     // In ambient mode, honor the __hasParticle random chance (only ~35% of edges have particles)
     return link.__hasParticle ? 1 : 0;
-  }, [activeFocusNode]);
+  }, [activeFocusNode, isLinkFuture, isLinkLensActive]);
 
   const linkParticleOffset = useCallback((link: any) => {
     return link.__particleOffset ?? 0;
@@ -955,6 +1147,49 @@ export default function ExploreCanvas({ onViewProfile, focusedNodeId }: ExploreC
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
         </button>
+
+        {/* Cinematic Auto-Orbit Toggle */}
+        <button
+          onClick={onToggleAutoOrbit}
+          className={`p-2.5 rounded-full backdrop-blur-xl border transition-all shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex items-center justify-center group ${
+            isAutoOrbit 
+              ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.3)]' 
+              : 'bg-black/40 hover:bg-white/10 border-white/10 text-white/50 hover:text-white'
+          }`}
+          title={isAutoOrbit ? 'Pause Orbit Rotation' : 'Start Cinematic Auto-Orbit'}
+          aria-label="Toggle Orbit"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isAutoOrbit ? 'animate-spin [animation-duration:12s]' : ''}>
+            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(45 12 12)"></ellipse>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        </button>
+
+        {/* Procedural Audio Haptics Toggle */}
+        <button
+          onClick={handleToggleAudio}
+          className={`p-2.5 rounded-full backdrop-blur-xl border transition-all shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex items-center justify-center group ${
+            !audioMuted 
+              ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.2)]' 
+              : 'bg-black/40 hover:bg-white/10 border-white/10 text-white/40 hover:text-white'
+          }`}
+          title={audioMuted ? 'Unmute Procedural Audio Haptics' : 'Mute Procedural Audio'}
+          aria-label="Toggle Audio"
+        >
+          {!audioMuted ? (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+            </svg>
+          ) : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="1" y1="1" x2="23" y2="23"></line>
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            </svg>
+          )}
+        </button>
+
         <div className="flex flex-col bg-black/40 backdrop-blur-xl border border-white/10 rounded-full overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
           <button
             onClick={zoomIn}

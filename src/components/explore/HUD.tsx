@@ -9,6 +9,7 @@ interface HUDProps {
   onTodayClick?: () => void;
   onOpenMind?: () => void;
   onOpenSimulator?: () => void;
+  onOpenQuickSpar?: () => void;
 }
 
 export default function HUD({ 
@@ -17,7 +18,8 @@ export default function HUD({
   onSearchClick, 
   onTodayClick,
   onOpenMind,
-  onOpenSimulator
+  onOpenSimulator,
+  onOpenQuickSpar
 }: HUDProps) {
   const [greeting, setGreeting] = useState('Good day');
   const [pulseThought, setPulseThought] = useState<string | null>(null);
@@ -135,6 +137,19 @@ export default function HUD({
                 <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
               </svg>
               <span className="hidden sm:inline tracking-wider">Briefing</span>
+            </button>
+          )}
+
+          {onOpenQuickSpar && (
+            <button
+              onClick={onOpenQuickSpar}
+              className="px-3 py-1.5 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-xs font-mono text-cyan-300 hover:text-white transition-all flex items-center gap-1.5 shadow-[0_0_12px_rgba(6,182,212,0.2)]"
+              aria-label="Quick Spar"
+              title="Open Neural Sparring Copilot (Cmd+J)"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#00f0ff] animate-pulse" />
+              <span className="hidden sm:inline tracking-wider">Spar</span>
+              <kbd className="hidden sm:inline text-[9px] px-1 py-0.5 rounded bg-white/10 border border-white/10 text-white/60">⌘J</kbd>
             </button>
           )}
 

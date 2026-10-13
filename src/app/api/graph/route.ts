@@ -18,10 +18,9 @@ export async function GET(req: Request) {
     const me = await getOrCreateMeEntity(supabase, user.id);
 
     // Fetch ALL entities
-    
     let entQuery = supabase
       .from('entities')
-      .select('id, name, type, summary, props')
+      .select('id, name, type, summary, props, created_at, start_date, end_date')
       .eq('user_id', user.id)
       .is('deleted_at', null);
       
@@ -42,7 +41,7 @@ export async function GET(req: Request) {
       if (entError && entError.code === '42703') {
         // Migration 008 missing, graceful fallback
         console.warn('Migration 008 missing, falling back to flat entity graph');
-        const fallback = await supabase.from('entities').select('id, name, type, summary, props').eq('user_id', user.id).is('deleted_at', null);
+        const fallback = await supabase.from('entities').select('id, name, type, summary, props, created_at, start_date, end_date').eq('user_id', user.id).is('deleted_at', null);
         entities = fallback.data;
         entError = fallback.error;
       }
@@ -50,15 +49,12 @@ export async function GET(req: Request) {
       entError = e;
     }
 
-
-
     if (entError) throw entError;
 
     // Fetch edges
-    
     let edgeQuery = supabase
       .from('edges')
-      .select('src, dst, relation')
+      .select('src, dst, relation, created_at, occurred_on')
       .eq('user_id', user.id)
       .is('deleted_at', null);
       
@@ -79,7 +75,7 @@ export async function GET(req: Request) {
       if (edgesError && edgesError.code === '42703') {
         // Migration 008 missing, graceful fallback
         console.warn('Migration 008 missing, falling back to flat edge graph');
-        const fallback = await supabase.from('edges').select('src, dst, relation').eq('user_id', user.id).is('deleted_at', null);
+        const fallback = await supabase.from('edges').select('src, dst, relation, created_at, occurred_on').eq('user_id', user.id).is('deleted_at', null);
         edges = fallback.data;
         edgesError = fallback.error;
       }
@@ -156,6 +152,9 @@ export async function GET(req: Request) {
         isTension,
         tensionSeverity,
         tensionHeadline,
+        createdAt: e.created_at,
+        startDate: e.start_date,
+        endDate: e.end_date,
         // Pin root user entity exactly at origin (0, 0, 0)
         ...(isUser ? { fx: 0, fy: 0, fz: 0 } : {}),
       };
@@ -166,6 +165,8 @@ export async function GET(req: Request) {
       source: e.src,
       target: e.dst,
       relation: e.relation,
+      createdAt: e.created_at,
+      occurredOn: e.occurred_on,
     }));
 
     // Fetch cognitive clusters
